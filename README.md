@@ -1,2 +1,2 @@
-# shv-rs
-SHV implementation in rust
+# shvcall-rs
+CLI utility to invoke remote SHV RPC calls

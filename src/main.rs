@@ -7,13 +7,13 @@ use futures::io::BufWriter;
 use futures::AsyncReadExt;
 use futures::AsyncWriteExt;
 use log::*;
-use shv::client::LoginParams;
-use shv::framerw::{FrameReader, FrameWriter};
-use shv::rpcmessage::RqId;
-use shv::serialrw::{SerialFrameReader, SerialFrameWriter};
-use shv::streamrw::{StreamFrameReader, StreamFrameWriter};
-use shv::util::{login_from_url, parse_log_verbosity};
-use shv::{client, RpcMessage, RpcMessageMetaTags, RpcValue};
+use shvrpc::client::LoginParams;
+use shvrpc::framerw::{FrameReader, FrameWriter};
+use shvrpc::rpcmessage::RqId;
+use shvrpc::serialrw::{SerialFrameReader, SerialFrameWriter};
+use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
+use shvrpc::util::{login_from_url, parse_log_verbosity};
+use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
 use simple_logger::SimpleLogger;
 use url::Url;
 
@@ -23,8 +23,9 @@ use crossterm::tty::IsTty;
 use rustyline_async::ReadlineEvent;
 #[cfg(feature = "readline")]
 use std::io::Write;
+use shvproto::RpcValue;
 
-type Result = shv::Result<()>;
+type Result = shvrpc::Result<()>;
 
 #[derive(Parser, Debug)]
 //#[structopt(name = "shvcall", version = env!("CARGO_PKG_VERSION"), author = env!("CARGO_PKG_AUTHORS"), about = "SHV call")]
@@ -226,7 +227,7 @@ async fn make_call(url: &Url, opts: &Opts) -> Result {
         path: &str,
         method: &str,
         param: &str,
-    ) -> shv::Result<RqId> {
+    ) -> shvrpc::Result<RqId> {
         let param = if param.is_empty() {
             None
         } else {
