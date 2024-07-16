@@ -21,9 +21,9 @@ use url::Url;
 use crossterm::tty::IsTty;
 #[cfg(feature = "readline")]
 use rustyline_async::ReadlineEvent;
+use shvproto::RpcValue;
 #[cfg(feature = "readline")]
 use std::io::Write;
-use shvproto::RpcValue;
 
 type Result = shvrpc::Result<()>;
 
@@ -35,6 +35,7 @@ struct Opts {
     url: String,
     #[arg(short = 'p', long = "path")]
     path: Option<String>,
+    /// Method can be specified also together with path like: shv/path:method
     #[arg(short = 'm', long = "method")]
     method: Option<String>,
     #[arg(short = 'a', long = "param")]
@@ -74,7 +75,6 @@ fn is_tty() -> bool {
     return false;
 }
 
-// const DEFAULT_RPC_TIMEOUT_MSEC: u64 = 5000;
 pub(crate) fn main() -> Result {
     let opts = Opts::parse();
 
@@ -251,8 +251,8 @@ async fn make_call(url: &Url, opts: &Opts) -> Result {
         };
         Ok((path, method, param))
     }
-    if opts.path.is_none() && opts.method.is_some() {
-        return Err("--path parameter missing".into());
+    if opts.path.is_none() && opts.method.is_none() {
+        return Err("--path or --method parameter must be specified".into());
     }
     if opts.path.is_some() && opts.method.is_none() {
         return Err("--method parameter missing".into());
@@ -354,8 +354,12 @@ async fn make_call(url: &Url, opts: &Opts) -> Result {
             }
         }
     } else {
-        let path = opts.path.clone().unwrap_or_default();
-        let method = opts.method.clone().unwrap_or_default();
+        let mut path = opts.path.clone().unwrap_or_default();
+        let mut method = opts.method.clone().unwrap_or_default();
+        if let Some(ix) = method.find(':') {
+            path = method[0..ix].to_owned();
+            method = method[ix + 1..].to_owned();
+        }
         let param = opts.param.clone().unwrap_or_default();
         send_request(&mut *frame_writer, &path, &method, &param).await?;
         let resp = frame_reader.receive_message().await?;
