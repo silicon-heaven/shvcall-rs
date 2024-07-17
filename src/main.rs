@@ -251,9 +251,6 @@ async fn make_call(url: &Url, opts: &Opts) -> Result {
         };
         Ok((path, method, param))
     }
-    if opts.path.is_none() && opts.method.is_none() {
-        return Err("--path or --method parameter must be specified".into());
-    }
     if opts.path.is_some() && opts.method.is_none() {
         return Err("--method parameter missing".into());
     }
