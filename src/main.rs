@@ -87,9 +87,9 @@ pub(crate) fn main() -> Result {
     }
     logger.init().unwrap();
 
-    log::info!("=====================================================");
-    log::info!("{} starting", std::module_path!());
-    log::info!("=====================================================");
+    info!("=====================================================");
+    info!("{} starting", std::module_path!());
+    info!("=====================================================");
 
     // let rpc_timeout = Duration::from_millis(DEFAULT_RPC_TIMEOUT_MSEC);
     let url = Url::parse(&opts.url)?;
