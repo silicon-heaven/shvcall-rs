@@ -33,18 +33,18 @@ struct Opts {
     ///Url to connect to, example tcp://admin@localhost:3755?password=dj4j5HHb, localsocket:path/to/socket
     #[arg(name = "url", short = 's', long = "url")]
     url: String,
-    #[arg(short = 'p', long = "path")]
+    #[arg(short = 't', long = "path")]
     path: Option<String>,
     /// Method can be specified also together with path like: shv/path:method
-    #[arg(short = 'm', long = "method")]
+    #[arg(short, long)]
     method: Option<String>,
-    #[arg(short = 'a', long = "param")]
+    #[arg(short, long)]
     param: Option<String>,
     /// Output format: [ cpon | chainpack | simple | value | "Placeholders {PATH} {METHOD} {VALUE} in any number and combination in custom string." ]
     #[arg(short = 'o', long = "output-format", default_value = "cpon")]
     output_format: String,
     /// Verbose mode (module, .)
-    #[arg(short = 'v', long = "verbose")]
+    #[arg(short, long)]
     verbose: Option<String>,
 }
 enum OutputFormat {
