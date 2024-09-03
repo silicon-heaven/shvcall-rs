@@ -385,13 +385,36 @@ async fn make_call(mut frame_reader: BoxedFrameReader, mut frame_writer: BoxedFr
 
     Ok(())
 }
+fn split_quoted(s: &str) -> Vec<&str> {
+    let mut wrapped = false;
+    let ret = s.split(|c| {
+        if c == '[' {
+            wrapped = true;
+        } else if c == ']' {
+            wrapped = false;
+        }
+        c == ':' && !wrapped
+    }).collect::<Vec<&str>>();
+    ret
+}
 async fn make_tunnel(mut frame_reader: BoxedFrameReader, mut frame_writer: BoxedFrameWriter, opts: &Opts) -> Result {
-    let mut tunnel = opts.tunnel.as_ref().unwrap().split(':');
-    let local_port = tunnel.next().ok_or("Local port must be specified")?;
-    let host = tunnel.next().ok_or("Host must be specified")?;
-    let remote_port = tunnel.next().ok_or("Remote port must be specified")?;
-    let host = format!("{host}:{remote_port}");
+    let tunnel_str = opts.tunnel.as_ref().unwrap().as_str();
+    let tunnel: Vec<_> = split_quoted(tunnel_str);
+    let tunnel = &tunnel[..];
+    if tunnel.len() < 3 || tunnel.len() > 4 {
+        return Err(format!("Invalid tunnel specification: {tunnel_str}").into());
+    }
+    let (local_host, tunnel) = if tunnel.len() == 4 {
+        (if tunnel[0].is_empty() { "0.0.0.0" } else { tunnel[0] }, &tunnel[ 1 ..])
+    } else {
+        ("127.0.0.1", tunnel)
+    };
+    let local_port = tunnel[0];
+    let remote_host = tunnel[1];
+    let remote_port = tunnel[2];
+    let host = format!("{remote_host}:{remote_port}");
     let local_port = local_port.parse::<i32>()?;
+    let local_host = local_host.to_owned();
     enum RpcReaderCmd {
         RegisterResponse(RqId, Sender<RpcFrame>, bool),
         UnregisterResponse(RqId),
@@ -457,8 +480,8 @@ async fn make_tunnel(mut frame_reader: BoxedFrameReader, mut frame_writer: Boxed
             frame_writer.send_frame(frame).await?
         }
     });
-    info!("Starting TCP server");
-    let listener = TcpListener::bind(format!("127.0.0.1:{local_port}")).await?;
+    info!("Starting TCP server on {local_host}:{local_port}");
+    let listener = TcpListener::bind(format!("{local_host}:{local_port}")).await?;
     let mut incoming = listener.incoming();
 
     while let Some(stream) = incoming.next().await {
