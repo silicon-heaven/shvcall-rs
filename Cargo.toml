@@ -1,6 +1,6 @@
 [package]
 name = "shvcall"
-version = "3.0.0"
+version = "3.1.0"
 edition = "2021"
 
 [features]
@@ -11,7 +11,6 @@ readline = ["dep:crossterm", "dep:rustyline-async"]
 simple_logger = { git = "https://github.com/fvacek/rust-simple_logger.git", branch = "main", features = ["stderr"] }
 shvproto = { git = "https://github.com/silicon-heaven/libshvproto-rs.git", branch = "master" }
 shvrpc = { git = "https://github.com/silicon-heaven/libshvrpc-rs.git", branch = "master" }
-#shvrpc = { path = "../libshvrpc-rs" }
 futures = "0.3.29"
 async-std = { version = "1.12.0", features = ["attributes"] }
 log = "0.4.20"
@@ -20,4 +19,8 @@ rustyline-async = { version = "0.4.1", optional = true }
 crossterm = { version = "0.27.0", optional = true }
 url = "2.4.1"
 
-
+# For local development
+#[patch."https://github.com/silicon-heaven/libshvproto-rs"]
+#shvproto = { path = "../libshvproto-rs" }
+#[patch."https://github.com/silicon-heaven/libshvrpc-rs"]
+#shvrpc = { path = "../libshvrpc-rs" }
