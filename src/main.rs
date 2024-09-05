@@ -378,9 +378,14 @@ async fn make_call(mut frame_reader: BoxedFrameReader, mut frame_writer: BoxedFr
             method = method[ix + 1..].to_owned();
         }
         let param = opts.param.clone().unwrap_or_default();
-        send_request(&mut *frame_writer, &path, &method, &param).await?;
-        let resp = frame_reader.receive_message().await?;
-        print_resp(&mut stdout, &resp, (&*opts.output_format).into()).await?;
+        let rqid = send_request(&mut *frame_writer, &path, &method, &param).await?;
+        loop {
+            let resp = frame_reader.receive_message().await?;
+            if resp.request_id().unwrap_or_default() == rqid {
+                print_resp(&mut stdout, &resp, (&*opts.output_format).into()).await?;
+                break
+            }
+        }
     }
 
     Ok(())
