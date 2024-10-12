@@ -385,9 +385,11 @@ async fn make_call(mut frame_reader: BoxedFrameReader, mut frame_writer: BoxedFr
         let rqid = send_request(&mut *frame_writer, &path, &method, &param).await?;
         async fn read_meta(frame_reader: &mut BoxedFrameReader, rq_id: RqId) {
             loop {
-                if let Ok(RpcFrameReception::Meta { request_id, shv_path, method, ..}) = frame_reader.receive_frame_or_meta().await {
-                    if request_id.unwrap_or_default() == rq_id && method.is_none() && shv_path.is_none() {
-                        break;
+                if let Ok(RpcFrameReception::MetaAnnouncement { response_id, ..}) = frame_reader.receive_frame_or_meta().await {
+                    if let Some(response_id) = response_id {
+                        if response_id == rq_id {
+                            break;
+                        }
                     }
                 }
             }
@@ -403,7 +405,7 @@ async fn make_call(mut frame_reader: BoxedFrameReader, mut frame_writer: BoxedFr
         return match frame_reader.receive_frame_or_meta().await {
             Ok(frame) => {
                 match frame {
-                    RpcFrameReception::Meta { .. } => {
+                    RpcFrameReception::MetaAnnouncement { .. } => {
                         Err("Unexpected meta received.".into())
                     }
                     RpcFrameReception::Frame(frame) => {
