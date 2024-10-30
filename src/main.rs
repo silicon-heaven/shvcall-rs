@@ -50,7 +50,7 @@ struct Opts {
     /// Timeout in milliseconds, value 0 means wait forever.
     #[arg(short, long, default_value = "5000")]
     timeout: u64,
-    /// Output format: [ cpon | chainpack | simple | value | "Placeholders {PATH} {METHOD} {VALUE} in any number and combination in custom string." ]
+    /// Output format: [ cpon | icpon | chainpack | simple | value | "Placeholders {PATH} {METHOD} {VALUE} in any number and combination in custom string." ]
     #[arg(short = 'o', long = "output-format", default_value = "cpon")]
     output_format: String,
     /// Create TCP tunnel, SSH like syntax, example: -L 2222:some.host.org:22
@@ -67,6 +67,7 @@ struct Opts {
 }
 enum OutputFormat {
     Cpon,
+    CponIndented,
     ChainPack,
     Simple,
     Value,
@@ -79,6 +80,7 @@ impl From<&str> for OutputFormat {
             "simple" => Self::Simple,
             "value" => Self::Value,
             "cpon" => Self::Cpon,
+            "icpon" => Self::CponIndented,
             _ => Self::Custom(value.to_string()),
         }
     }
@@ -217,6 +219,11 @@ async fn make_call(
         let bytes = match output_format {
             OutputFormat::Cpon => {
                 let mut s = resp.as_rpcvalue().to_cpon();
+                s.push('\n');
+                s.as_bytes().to_owned()
+            }
+            OutputFormat::CponIndented => {
+                let mut s = resp.as_rpcvalue().to_cpon_indented("\t");
                 s.push('\n');
                 s.as_bytes().to_owned()
             }
