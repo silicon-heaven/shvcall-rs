@@ -1,24 +1,90 @@
-name: Rust
+name: Rust Build and Artifact Creation
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 on:
   push:
-    branches: [ "master" ]
+    branches:
+      - master
   pull_request:
-    branches: [ "master" ]
+    branches:
+      - master
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
-
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        toolchain: [stable, nightly]
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Clippy
-      run: cargo clippy --verbose --all-features
-    - name: Build
-      run: cargo build --verbose --all-features
-    - name: Run tests
-      run: cargo test --verbose --all-features -- --test-threads=1
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        target: ${{ matrix.target }}
+        toolchain: ${{ matrix.toolchain }}
+        override: true
+
+    - name: Build and Install Binary
+      run: |
+        mkdir -p ${{github.workspace}}/install
+        cargo install --path '${{github.workspace}}' --root '${{github.workspace}}/install' --target ${{ matrix.target }}
+      shell: bash
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.os }}-${{ matrix.toolchain }}-binary
+        path: ${{github.workspace}}/install/bin
+
+  create-nightly-release:
+    name: Create nightly
+    if: github.ref == 'refs/heads/master'
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Consolidate artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*-latest-nightly-binary'
+          merge-multiple: true
+
+      - name: Rename artifacts
+        run: |
+          SHVCALL_FILE_NAME="$(printf "shvcall-nightly-g%s" "$(head -c 7 <<< '${{github.sha}}')")"
+          mv shvcall "${SHVCALL_FILE_NAME}"
+
+      - name: Remove previous Nightly assets
+        run: |
+          REPO='${{github.repository}}'
+          readarray -t PREVIOUS_ASSETS < <(gh release --repo "$REPO" view nightly --json assets --jq .assets[].name)
+          for PREVIOUS_ASSET in "${PREVIOUS_ASSETS[@]}"; do
+            gh release --repo "$REPO" delete-asset nightly "${PREVIOUS_ASSET}" --yes
+          done
+        env:
+          GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Nightly
+          tag_name: nightly
+          fail_on_unmatched_files: true
+          body: |
+            The latest and greatest.
+
+            This is a nightly release. If you find any bugs, please report them to the repository's issue tracker.
+          files: |
+             shvcall*
