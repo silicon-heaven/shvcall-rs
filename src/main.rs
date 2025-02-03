@@ -121,7 +121,11 @@ pub(crate) fn main() -> Result {
     logger = logger.with_level(LevelFilter::Info);
     if let Some(module_names) = &opts.verbose {
         for (module, level) in parse_log_verbosity(module_names, module_path!()) {
-            logger = logger.with_module_level(module, level);
+            if let Some(module) = module {
+                logger = logger.with_module_level(module, level);
+            } else {
+                logger = logger.with_level(level);
+            }
         }
     }
     logger.init().unwrap();
