@@ -1,6 +1,6 @@
 [package]
 name = "shvcall"
-version = "3.4.0"
+version = "3.4.1"
 edition = "2021"
 
 [features]
@@ -8,12 +8,12 @@ readline = ["dep:crossterm", "dep:rustyline-async"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-simple_logger = { git = "https://github.com/fvacek/rust-simple_logger.git", branch = "main", features = ["stderr"] }
 shvproto = { git = "https://github.com/silicon-heaven/libshvproto-rs.git", branch = "master" }
 shvrpc = { git = "https://github.com/silicon-heaven/libshvrpc-rs.git", branch = "master" }
 futures = "0.3.29"
 async-std = { version = "1.12.0", features = ["attributes"] }
 log = "0.4.20"
+simple_logger = { version = "5.0.0", features = ["stderr"] }
 clap = { version = "4.4.12", features = ["derive"] }
 rustyline-async = { version = "0.4.1", optional = true }
 crossterm = { version = "0.28", optional = true }
