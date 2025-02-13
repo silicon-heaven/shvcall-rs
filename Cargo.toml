@@ -19,6 +19,7 @@ rustyline-async = { version = "0.4.1", optional = true }
 crossterm = { version = "0.28", optional = true }
 url = "2.4.1"
 futures-time = "3.0.0"
+termios = "0.3.3"
 
 # For local development
 #[patch."https://github.com/silicon-heaven/libshvproto-rs"]

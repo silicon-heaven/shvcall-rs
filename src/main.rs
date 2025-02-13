@@ -24,22 +24,27 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use url::Url;
 
-#[cfg(feature = "readline")]
-use crossterm::tty::IsTty;
 use futures::stream::FuturesUnordered;
-#[cfg(feature = "readline")]
-use rustyline_async::ReadlineEvent;
 use shvproto::{Map, RpcValue};
 use shvrpc::rpc::ShvRI;
+// use tokio::io::AsyncReadExt;
+
+#[cfg(feature = "readline")]
+use crossterm::tty::IsTty;
+#[cfg(feature = "readline")]
+use rustyline_async::ReadlineEvent;
 #[cfg(feature = "readline")]
 use std::io::Write;
+use std::os::fd::{AsRawFd, RawFd};
+use async_std::fs::File;
+use termios::Termios;
 
 type Result = shvrpc::Result<()>;
 
 #[derive(Parser, Debug)]
 //#[structopt(name = "shvcall", version = env!("CARGO_PKG_VERSION"), author = env!("CARGO_PKG_AUTHORS"), about = "SHV call")]
 struct Opts {
-    ///Url to connect to, example tcp://admin@localhost:3755?password=dj4j5HHb, localsocket:path/to/socket
+    ///Url to connect to, example tcp://admin@localhost:3755?password=dj4j5HHb, localsocket:path/to/socket, tty:/dev/ttyACM0
     #[arg(name = "url", short = 's', long = "url")]
     url: Option<String>,
     /// Method is specified together with path like: shv/path:method
@@ -135,10 +140,37 @@ pub(crate) fn main() -> Result {
 
     task::block_on(try_main(&url, opts))
 }
+
+fn configure_serial_port(fd: RawFd) -> io::Result<Termios> {
+    // Get the current configuration of the serial port
+    let original_config = Termios::from_fd(fd)?;
+
+    // Save the original configuration
+    let mut modified_config = original_config.clone();
+
+    // Set the desired serial port settings (e.g., 9600 baud, 8 data bits, no parity, 1 stop bit)
+    termios::cfsetspeed(&mut modified_config, termios::B19200)?;
+
+    modified_config.c_cflag &= !termios::PARENB;   // No parity
+    modified_config.c_cflag &= !termios::CSTOPB;   // 1 stop bit
+    modified_config.c_cflag &= !termios::CSIZE;
+    modified_config.c_cflag |= termios::CS8;       // 8 data bits
+
+    // Set the serial port to raw mode (no processing)
+    modified_config.c_lflag &= !(termios::ICANON | termios::ECHO | termios::ECHOE | termios::ISIG); // Disable canonical mode, echo, signals
+    modified_config.c_iflag &= !(termios::IXON | termios::IXOFF | termios::IXANY);                  // Disable flow control
+    modified_config.c_oflag &= !termios::OPOST;                                                // Disable output processing
+
+    // Apply the new configuration to the serial port
+    termios::tcsetattr(fd, termios::TCSANOW, &modified_config)?;
+
+    // Return the original and modified configurations
+    Ok(original_config)
+}
+
 async fn login(url: &Url) -> shvrpc::Result<(BoxedFrameReader, BoxedFrameWriter)> {
     // Establish a connection
-    let mut reset_session = false;
-    let (mut frame_reader, mut frame_writer) = match url.scheme() {
+    let (mut frame_reader, mut frame_writer, reset_session) = match url.scheme() {
         "tcp" => {
             let address = format!(
                 "{}:{}",
@@ -151,7 +183,7 @@ async fn login(url: &Url) -> shvrpc::Result<(BoxedFrameReader, BoxedFrameWriter)
             let bwr = BufWriter::new(writer);
             let frame_reader: BoxedFrameReader = Box::new(StreamFrameReader::new(brd));
             let frame_writer: BoxedFrameWriter = Box::new(StreamFrameWriter::new(bwr));
-            (frame_reader, frame_writer)
+            (frame_reader, frame_writer, false)
         }
         "unix" => {
             let stream = UnixStream::connect(url.path()).await?;
@@ -160,7 +192,7 @@ async fn login(url: &Url) -> shvrpc::Result<(BoxedFrameReader, BoxedFrameWriter)
             let bwr = BufWriter::new(writer);
             let frame_reader: BoxedFrameReader = Box::new(StreamFrameReader::new(brd));
             let frame_writer: BoxedFrameWriter = Box::new(StreamFrameWriter::new(bwr));
-            (frame_reader, frame_writer)
+            (frame_reader, frame_writer, false)
         }
         "unixs" => {
             let stream = UnixStream::connect(url.path()).await?;
@@ -171,8 +203,30 @@ async fn login(url: &Url) -> shvrpc::Result<(BoxedFrameReader, BoxedFrameWriter)
                 Box::new(SerialFrameReader::new(brd).with_crc_check(false));
             let frame_writer: BoxedFrameWriter =
                 Box::new(SerialFrameWriter::new(bwr).with_crc_check(false));
-            reset_session = true;
-            (frame_reader, frame_writer)
+            (frame_reader, frame_writer, true)
+        }
+        "serial" | "tty" => {
+            let device = url.path();
+            // Open the serial port
+            info!("Opening: {device}");
+            let stream = File::open(device).await?;
+            info!("Configuring: {device}");
+            let _modified_config = configure_serial_port(stream.as_raw_fd())?;
+            // Now restore the original configuration before exiting
+            // termios::tcsetattr(serial_fd.as_raw_fd(), termios::TCSANOW, &original_config)?;
+            info!("Ok");
+            // let (reader, writer) = stream.split();
+
+            // #[cfg(unix)]
+            // port.set_exclusive(false).expect("Unable to set serial port exclusive to false");
+            let (reader, writer) = stream.split();
+            let brd = BufReader::new(reader);
+            let bwr = BufWriter::new(writer);
+            let frame_reader: BoxedFrameReader =
+                Box::new(SerialFrameReader::new(brd).with_crc_check(true));
+            let frame_writer: BoxedFrameWriter =
+                Box::new(SerialFrameWriter::new(bwr).with_crc_check(true));
+            (frame_reader, frame_writer, true)
         }
         s => {
             panic!("Scheme {s} is not supported")
