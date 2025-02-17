@@ -1,7 +1,10 @@
 [package]
 name = "shvcall"
-version = "3.4.1"
+version = "3.5.0"
 edition = "2021"
+
+[[bin]]
+name = "shvcall"
 
 [features]
 readline = ["dep:crossterm", "dep:rustyline-async"]

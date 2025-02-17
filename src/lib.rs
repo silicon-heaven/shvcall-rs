@@ -17,9 +17,8 @@ use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::RqId;
 use shvrpc::serialrw::{SerialFrameReader, SerialFrameWriter};
 use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
-use shvrpc::util::{login_from_url, parse_log_verbosity};
-use shvrpc::{client, Error, RpcMessage, RpcMessageMetaTags};
-use simple_logger::SimpleLogger;
+use shvrpc::util::login_from_url;
+use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
 use std::collections::BTreeMap;
 use std::future::Future;
 use url::Url;
@@ -34,37 +33,38 @@ use shvrpc::rpc::ShvRI;
 #[cfg(feature = "readline")]
 use std::io::Write;
 
-type Result = shvrpc::Result<()>;
+pub type Result = shvrpc::Result<()>;
 
 #[derive(Parser, Debug)]
 //#[structopt(name = "shvcall", version = env!("CARGO_PKG_VERSION"), author = env!("CARGO_PKG_AUTHORS"), about = "SHV call")]
-struct Opts {
+pub struct Opts {
     ///Url to connect to, example tcp://admin@localhost:3755?password=dj4j5HHb, localsocket:path/to/socket
-    #[arg(name = "url", short = 's', long = "url")]
-    url: Option<String>,
+    #[arg(short = 's', long = "url")]
+    pub url: Url,
     /// Method is specified together with path like: shv/path:method
     #[arg(short, long)]
-    method: Option<String>,
+    pub method: Option<String>,
     #[arg(short, long)]
-    param: Option<String>,
+    pub param: Option<String>,
     /// Timeout in milliseconds, value 0 means wait forever.
     #[arg(short, long, default_value = "5000")]
-    timeout: u64,
+    pub timeout: u64,
     /// Output format: [ cpon | icpon | chainpack | simple | value | "Placeholders {PATH} {METHOD} {VALUE} in any number and combination in custom string." ]
     #[arg(short = 'o', long = "output-format", default_value = "cpon")]
-    output_format: String,
+    pub output_format: String,
     /// Create TCP tunnel, SSH like syntax, example: -L 2222:some.host.org:22
     #[arg(short = 'L', long)]
-    tunnel: Option<String>,
+    pub tunnel: Option<String>,
     /// Send N request in M threads, format is N[,M], default M == 1
     #[arg(long)]
-    burst: Option<String>,
+    pub burst: Option<String>,
     /// Verbose mode (module, .)
     #[arg(short, long)]
-    verbose: Option<String>,
+    pub verbose: Option<String>,
     #[arg(long)]
-    version: bool,
+    pub version: bool,
 }
+
 enum OutputFormat {
     Cpon,
     CponIndented,
@@ -73,6 +73,7 @@ enum OutputFormat {
     Value,
     Custom(String),
 }
+
 impl From<&str> for OutputFormat {
     fn from(value: &str) -> Self {
         match value {
@@ -105,40 +106,6 @@ where
     })
 }
 
-pub(crate) fn main() -> Result {
-
-    let opts = Opts::parse();
-
-    //println!("opts.version: {}", opts.version);
-    let app_name = env!("CARGO_PKG_NAME");
-    let app_version = env!("CARGO_PKG_VERSION");
-    if opts.version == true {
-        println!("{app_name} ver. {app_version}");
-        return Ok(())
-    }
-
-    let mut logger = SimpleLogger::new();
-    logger = logger.with_level(LevelFilter::Info);
-    if let Some(module_names) = &opts.verbose {
-        for (module, level) in parse_log_verbosity(module_names, module_path!()) {
-            if let Some(module) = module {
-                logger = logger.with_module_level(module, level);
-            } else {
-                logger = logger.with_level(level);
-            }
-        }
-    }
-    logger.init().unwrap();
-
-    info!("=====================================================");
-    info!("{app_name} ver. {app_version}");
-    info!("=====================================================");
-
-    let url = opts.url.as_ref().ok_or::<Error>("URL param must be provided.".into())?;
-    let url = Url::parse(url)?;
-
-    task::block_on(try_main(&url, opts))
-}
 async fn login(url: &Url) -> shvrpc::Result<(BoxedFrameReader, BoxedFrameWriter)> {
     // Establish a connection
     let mut reset_session = false;
@@ -460,7 +427,7 @@ async fn receive_response(
         }
     }
 }
-async fn make_burst_call(url: &Url, opts: &Opts) -> Result {
+async fn make_burst_call(opts: &Opts) -> Result {
     if opts.method.is_none() {
         return Err("--method parameter missing".into());
     }
@@ -495,6 +462,7 @@ async fn make_burst_call(url: &Url, opts: &Opts) -> Result {
         }
         println!("Burst task #{taskno} finished, after {count} calls made successfully.");
     }
+    let url = opts.url.clone();
     (0..ntask)
         .map(|taskno| {
             task::spawn(burst_task(
@@ -690,11 +658,12 @@ async fn make_tunnel(
     }
     Ok(())
 }
-async fn try_main(url: &Url, opts: Opts) -> Result {
+
+pub async fn try_main(opts: Opts) -> Result {
     if opts.burst.is_some() {
-        return make_burst_call(url, &opts).await;
+        return make_burst_call(&opts).await;
     }
-    let (frame_reader, frame_writer) = login(url).await?;
+    let (frame_reader, frame_writer) = login(&opts.url).await?;
     let res = if opts.tunnel.is_some() {
         make_tunnel(frame_reader, frame_writer, &opts).await
     } else {
