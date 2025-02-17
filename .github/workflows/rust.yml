@@ -88,3 +88,12 @@ jobs:
             This is a nightly release. If you find any bugs, please report them to the repository's issue tracker.
           files: |
              shvcall*
+
+  coverage:
+    name: Code coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate coverage
+        uses: syyyr/rust-pycobertura-action@v1.2.0
+        with:
+          project_name: shvcall
