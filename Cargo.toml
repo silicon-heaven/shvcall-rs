@@ -1,6 +1,6 @@
 [package]
 name = "shvcall"
-version = "3.5.0"
+version = "3.6.0"
 edition = "2021"
 
 [[bin]]
@@ -22,6 +22,7 @@ rustyline-async = { version = "0.4.1", optional = true }
 crossterm = { version = "0.28", optional = true }
 url = "2.4.1"
 futures-time = "3.0.0"
+async-channel = "2.3.1"
 
 # For local development
 #[patch."https://github.com/silicon-heaven/libshvproto-rs"]

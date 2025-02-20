@@ -20,6 +20,8 @@ use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
 use shvrpc::util::login_from_url;
 use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
 use url::Url;
+use async_channel::{Sender, Receiver};
+use async_std::future::{timeout};
 
 #[cfg(feature = "readline")]
 use crossterm::tty::IsTty;
@@ -30,8 +32,6 @@ use shvproto::{Map, RpcValue};
 use shvrpc::rpc::ShvRI;
 #[cfg(feature = "readline")]
 use std::io::Write;
-use async_broadcast::{Receiver, Sender};
-use async_std::future::{timeout};
 
 pub type Result = shvrpc::Result<()>;
 
@@ -480,6 +480,7 @@ async fn make_burst_call(opts: &Opts) -> Result {
 
     Ok(())
 }
+
 fn split_quoted(s: &str) -> Vec<&str> {
     let mut wrapped = false;
     let ret = s
@@ -493,6 +494,12 @@ fn split_quoted(s: &str) -> Vec<&str> {
         })
         .collect::<Vec<&str>>();
     ret
+}
+#[derive(Debug)]
+struct Tunnel {
+    create_rqid: RqId,
+    write_rqid: RqId,
+    frame_sender: Sender<RpcFrame>,
 }
 async fn start_tunnel_server(
     mut broker_frame_reader: BoxedFrameReader,
@@ -523,59 +530,89 @@ async fn start_tunnel_server(
     let remote_host_port = format!("{remote_host}:{remote_port}");
     let local_port = local_port.parse::<i32>()?;
     let local_host = local_host.to_owned();
+
+    let mut tunnels: Vec<Tunnel> = Vec::new();
+
     debug!(target: "Tunnel", "Starting TCP server on {local_host}:{local_port}");
     let listener = TcpListener::bind(format!("{local_host}:{local_port}")).await?;
     let mut incoming = listener.incoming();
 
-    let (write_frame_sender, mut write_frame_receiver) = async_broadcast::broadcast(64);
-    let (read_frame_sender, read_frame_receiver) = async_broadcast::broadcast(64);
-    spawn_and_log_error(async move {
-        loop {
-            match broker_frame_reader.receive_frame().await {
-                Ok(frame) => {
-                    read_frame_sender.broadcast(frame).await.map_err(|e| e.to_string())?;
+    let (write_frame_sender, write_frame_receiver) = async_channel::unbounded();
+    loop {
+        select! {
+            stream = incoming.next().fuse() => {
+                if let Some(stream) = stream {
+                    let stream = stream?;
+                    debug!(target: "Tunnel", "New connection from {:?}", stream.local_addr());
+                    let create_rqid = RpcMessage::next_request_id();
+                    let write_rqid = RpcMessage::next_request_id();
+                    let (read_frame_sender, read_frame_receiver) = async_channel::unbounded();
+                    let tunnel = Tunnel {create_rqid, write_rqid, frame_sender: read_frame_sender};
+                    tunnels.push(tunnel);
+                    let read_frame_receiver = read_frame_receiver.clone();
+                    let write_frame_sender = write_frame_sender.clone();
+                    let remote_host_port = remote_host_port.clone();
+                    spawn_and_log_error(async move {
+                        handle_tunnel_socket(stream, remote_host_port, create_rqid, write_rqid, read_frame_receiver, write_frame_sender.clone()).await.map_err(|e | e.to_string())
+                    });
+                } else {
+                    break;
                 }
-                Err(e) => { return Err(e.to_string()) }
+            }
+            frame = broker_frame_reader.receive_frame().fuse() => {
+                match frame {
+                    Ok(frame) => {
+                        let rqid = frame.request_id().unwrap_or(0);
+                        for tunnel in &tunnels {
+                            if tunnel.write_rqid == rqid || tunnel.create_rqid == rqid {
+                                tunnel.frame_sender.send(frame).await?;
+                                break;
+                            }
+                        }
+                        tunnels.retain(|tunnel| tunnel.frame_sender.is_closed());
+                        // {
+                        //     if tunnel.frame_sender.is_closed() {
+                        //         debug!(target: "Tunnel", "Removing closed tunnel state {:?}", tunnel);
+                        //         false
+                        //     } else {
+                        //         true
+                        //     }
+                        // });
+                    }
+                    Err(e) => {
+                        error!("Get response receiver error: {e}");
+                        break;
+                    }
+                }
+            }
+            frame = write_frame_receiver.recv().fuse() => {
+                match frame {
+                    Ok(frame) => {
+                        broker_frame_writer.send_frame(frame).await?;
+                    }
+                    Err(e) => {
+                        error!("Get response receiver error: {e}");
+                        break;
+                    }
+                }
             }
         }
-        // debug!(target: "Tunnel", "Exit broker -> socket broadcast loop.");
-    });
-    spawn_and_log_error(async move {
-        loop {
-            match write_frame_receiver.recv().await {
-                Ok(frame) => {
-                    broker_frame_writer.send_frame(frame).await.map_err(|e| e.to_string())?;
-                }
-                Err(e) => { return Err(e.to_string()) }
-            }
-        }
-        // debug!(target: "Tunnel", "Exit socket -> broker broadcast loop.");
-    });
-    while let Some(stream) = incoming.next().await {
-        let stream = stream?;
-        debug!(target: "Tunnel", "New connection from {:?}", stream.local_addr());
-        let remote_host_port = remote_host_port.clone();
-        let read_frame_receiver = read_frame_receiver.clone();
-        let write_frame_sender = write_frame_sender.clone();
-        spawn_and_log_error(async move {
-            handle_tunnel_socket(stream, remote_host_port, read_frame_receiver, write_frame_sender).await.map_err(|e | e.to_string())
-        });
     }
     Ok(())
 }
 
-async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, mut read_frame_receiver: Receiver<RpcFrame>, mut write_frame_sender: Sender<RpcFrame>) -> Result {
+async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, create_rqid: RqId, write_rqid: RqId, read_frame_receiver: Receiver<RpcFrame>, mut write_frame_sender: Sender<RpcFrame>) -> Result {
     let tunid = {
         debug!(target: "Tunnel", "Creating tunnel");
         let tun_opts = Map::from([("host".into(), (remote_host_port).into())]);
-        let rq = RpcMessage::new_request(".app/tunnel", "create", Some(tun_opts.into()));
-        let rqid = rq.request_id().unwrap();
-        write_frame_sender.broadcast(rq.to_frame()?).await?;
+        let mut rq = RpcMessage::new_request(".app/tunnel", "create", Some(tun_opts.into()));
+        rq.set_request_id(create_rqid);
+        write_frame_sender.send(rq.to_frame()?).await?;
         loop {
             match timeout(core::time::Duration::from_secs(10), read_frame_receiver.recv()).await {
                 Ok(frame) => {
                     let frame = frame?;
-                    if frame.request_id().unwrap_or_default() == rqid {
+                    if frame.request_id().unwrap_or_default() == create_rqid {
                         let tunid = frame.to_rpcmesage()?.result()?.as_str().parse::<u64>()?;
                         break tunid;
                     }
@@ -588,40 +625,39 @@ async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, mut r
     };
     let mut expected_read_seqno = 0;
     let mut seqno_to_write = 0;
-    let write_rqid = {
+    {
         let mut rq = RpcMessage::new_request(&format!(".app/tunnel/{tunid}"), "write", None);
+        rq.set_request_id(write_rqid);
         rq.set_seqno(seqno_to_write);
         seqno_to_write += 1;
-        let rqid = rq.request_id().unwrap();
         debug!(target: "Tunnel", "Starting data exchange");
-        write_frame_sender.broadcast(rq.to_frame()?).await?;
-        rqid
+        write_frame_sender.send(rq.to_frame()?).await?;
     };
     let (mut sock_reader, mut sock_writer) = stream.split();
     let mut sock_read_buff: [u8; 1024] = [0; 1024];
     loop {
         select! {
-                n = sock_reader.read(&mut sock_read_buff).fuse() => {
-                    let n = n?;
-                    if n == 0 {
-                        debug!(target: "Tunnel", "Tunnel client socket closed");
-                        break;
-                    }
-                    let data = &sock_read_buff[0 .. n];
-                    seqno_to_write = process_socket_to_broker_data(tunid, seqno_to_write, write_rqid, data, &mut write_frame_sender).await?;
+            n = sock_reader.read(&mut sock_read_buff).fuse() => {
+                let n = n?;
+                if n == 0 {
+                    debug!(target: "Tunnel", "Tunnel client socket closed");
+                    break;
                 }
-                frame = read_frame_receiver.recv().fuse() => {
-                    match frame {
-                        Ok(frame) => {
-                            expected_read_seqno = process_broker_to_socket_frame(write_rqid, expected_read_seqno, &frame, &mut sock_writer).await?;
-                        }
-                        Err(e) => {
-                            error!("Get response receiver error: {e}");
-                            break;
-                        }
+                let data = &sock_read_buff[0 .. n];
+                seqno_to_write = process_socket_to_broker_data(tunid, seqno_to_write, write_rqid, data, &mut write_frame_sender).await?;
+            }
+            frame = read_frame_receiver.recv().fuse() => {
+                match frame {
+                    Ok(frame) => {
+                        expected_read_seqno = process_broker_to_socket_frame(write_rqid, expected_read_seqno, &frame, &mut sock_writer).await?;
+                    }
+                    Err(e) => {
+                        error!("Get response receiver error: {e}");
+                        break;
                     }
                 }
             }
+        }
     }
     Ok(())
 }
@@ -652,7 +688,7 @@ async fn process_socket_to_broker_data(tunid: u64, seqno_to_write: SeqNo, write_
     let mut rq = RpcMessage::new_request(&format!(".app/tunnel/{tunid}"), "write", Some(RpcValue::from(data)));
     rq.set_request_id(write_rqid);
     rq.set_seqno(seqno_to_write);
-    frame_writer.broadcast(rq.to_frame()?).await?;
+    frame_writer.send(rq.to_frame()?).await?;
     Ok(seqno_to_write + 1)
 }
 
