@@ -289,9 +289,13 @@ async fn make_call(
                             rl.add_history_entry(line.to_owned());
                             match parse_line(line) {
                                 Ok((path, method, param)) => {
-                                    let rqid =
-                                        send_request(&mut *frame_writer, path, method, param)
-                                            .await?;
+                                    let rqid = match send_request(&mut *frame_writer, path, method, param).await {
+                                        Ok(rqid) => {rqid}
+                                        Err(err) => {
+                                            writeln!(rl_stdout, "{}", err)?;
+                                            continue;
+                                        }
+                                    };
                                     loop {
                                         let resp = frame_reader.receive_message().await?;
                                         print_resp(
@@ -331,7 +335,6 @@ async fn make_call(
                 }
             }
         } else {
-            // let stdin = stdin();
             let mut stdin = BufReader::new(Unblock::new(std::io::stdin()));
             loop {
                 let mut line = String::new();
