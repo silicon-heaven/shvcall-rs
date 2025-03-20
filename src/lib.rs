@@ -1,8 +1,9 @@
 use std::future::Future;
-use async_std::io::BufReader;
-use async_std::net::{TcpListener, TcpStream};
-use async_std::os::unix::net::UnixStream;
-use async_std::{io, task};
+use std::io::{Stdout};
+use smol::io::{AsyncBufReadExt, BufReader};
+use smol::net::{TcpListener, TcpStream};
+use smol::net::unix::UnixStream;
+use smol::{Unblock};
 use clap::Parser;
 use futures::io::{BufWriter, WriteHalf};
 use futures::{AsyncWriteExt};
@@ -21,7 +22,6 @@ use shvrpc::util::login_from_url;
 use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
 use url::Url;
 use async_channel::{Sender, Receiver};
-use async_std::future::{timeout};
 
 #[cfg(feature = "readline")]
 use crossterm::tty::IsTty;
@@ -89,20 +89,21 @@ impl From<&str> for OutputFormat {
 type BoxedFrameReader = Box<dyn FrameReader + Unpin + Send>;
 type BoxedFrameWriter = Box<dyn FrameWriter + Unpin + Send>;
 
-pub fn spawn_and_log_error<F>(fut: F) -> task::JoinHandle<()>
+pub fn spawn_and_log_error<F>(fut: F)
 where
     F: Future<Output = std::result::Result<(), String>> + Send + 'static,
 {
-    task::spawn(async move {
+    #[allow(unused)]
+    smol::spawn(async move {
         if let Err(e) = fut.await {
             error!("{}", e)
         }
-    })
+    });
 }
 
 fn is_tty() -> bool {
     #[cfg(feature = "readline")]
-    return io::stdin().is_tty();
+    return std::io::stdin().is_tty();
     #[cfg(not(feature = "readline"))]
     return false;
 }
@@ -183,7 +184,7 @@ async fn make_call(
     opts: &Opts,
 ) -> Result {
     async fn print_resp(
-        stdout: &mut io::Stdout,
+        stdout: &mut Unblock<Stdout>,
         resp: &RpcMessage,
         output_format: OutputFormat,
     ) -> Result {
@@ -256,7 +257,8 @@ async fn make_call(
         Ok(stdout.flush().await?)
     }
 
-    let mut stdout = io::stdout();
+    let mut stdout = Unblock::new(std::io::stdout());
+    // let mut stdout = stdout();
     if opts.method.is_none() {
         fn parse_line(line: &str) -> std::result::Result<(&str, &str, &str), String> {
             let line = line.trim();
@@ -329,7 +331,8 @@ async fn make_call(
                 }
             }
         } else {
-            let stdin = io::stdin();
+            // let stdin = stdin();
+            let mut stdin = BufReader::new(Unblock::new(std::io::stdin()));
             loop {
                 let mut line = String::new();
                 match stdin.read_line(&mut line).await {
@@ -465,7 +468,7 @@ async fn make_burst_call(opts: &Opts) -> Result {
     let url = opts.url.clone();
     (0..ntask)
         .map(|taskno| {
-            task::spawn(burst_task(
+            smol::spawn(burst_task(
                 url.clone(),
                 ri.path().to_owned(),
                 ri.method().to_owned(),
@@ -609,7 +612,7 @@ async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, creat
         rq.set_request_id(create_rqid);
         write_frame_sender.send(rq.to_frame()?).await?;
         loop {
-            match timeout(core::time::Duration::from_secs(10), read_frame_receiver.recv()).await {
+            match read_frame_receiver.recv().timeout(Duration::from_secs(10)).await {
                 Ok(frame) => {
                     let frame = frame?;
                     if frame.request_id().unwrap_or_default() == create_rqid {
