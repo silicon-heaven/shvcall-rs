@@ -1,4 +1,3 @@
-use async_std::task;
 use clap::Parser;
 use log::*;
 use shvrpc::util::parse_log_verbosity;
@@ -35,5 +34,5 @@ fn main() -> Result {
     debug!("{app_name} ver. {app_version}");
     debug!("=====================================================");
 
-    task::block_on(shvcall::try_main(opts))
+    smol::block_on(shvcall::try_main(opts))
 }
