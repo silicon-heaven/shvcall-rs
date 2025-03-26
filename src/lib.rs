@@ -93,12 +93,11 @@ pub fn spawn_and_log_error<F>(fut: F)
 where
     F: Future<Output = std::result::Result<(), String>> + Send + 'static,
 {
-    #[allow(unused)]
     smol::spawn(async move {
         if let Err(e) = fut.await {
             error!("{}", e)
         }
-    });
+    }).detach();
 }
 
 fn is_tty() -> bool {
