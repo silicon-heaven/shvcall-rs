@@ -22,16 +22,22 @@ use shvrpc::util::login_from_url;
 use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
 use url::Url;
 use async_channel::{Sender, Receiver};
+use futures::stream::FuturesUnordered;
+use shvproto::{Map, RpcValue};
+use shvrpc::rpc::ShvRI;
+
+#[cfg(feature = "serial")]
+use crate::serial::create_serial_frame_reader_writer;
 
 #[cfg(feature = "readline")]
 use crossterm::tty::IsTty;
-use futures::stream::FuturesUnordered;
 #[cfg(feature = "readline")]
 use rustyline_async::ReadlineEvent;
-use shvproto::{Map, RpcValue};
-use shvrpc::rpc::ShvRI;
 #[cfg(feature = "readline")]
 use std::io::Write;
+
+#[cfg(feature = "serial")]
+mod serial;
 
 pub type Result = shvrpc::Result<()>;
 
@@ -108,6 +114,7 @@ fn is_tty() -> bool {
 }
 async fn login(url: &Url) -> shvrpc::Result<(BoxedFrameReader, BoxedFrameWriter)> {
     // Establish a connection
+    debug!("Connecting to: {url}");
     let mut reset_session = false;
     let (mut frame_reader, mut frame_writer) = match url.scheme() {
         "tcp" => {
@@ -138,10 +145,17 @@ async fn login(url: &Url) -> shvrpc::Result<(BoxedFrameReader, BoxedFrameWriter)
             let (reader, writer) = stream.split();
             let brd = BufReader::new(reader);
             let bwr = BufWriter::new(writer);
-            let frame_reader: BoxedFrameReader =
-                Box::new(SerialFrameReader::new(brd).with_crc_check(false));
-            let frame_writer: BoxedFrameWriter =
-                Box::new(SerialFrameWriter::new(bwr).with_crc_check(false));
+            let frame_reader: BoxedFrameReader = Box::new(SerialFrameReader::new(brd).with_crc_check(false));
+            let frame_writer: BoxedFrameWriter = Box::new(SerialFrameWriter::new(bwr).with_crc_check(false));
+            reset_session = true;
+            (frame_reader, frame_writer)
+        }
+        #[cfg(feature = "serial")]
+        "serial" => {
+            let port_name = url.path();
+            let (frame_reader, frame_writer) = create_serial_frame_reader_writer(port_name)?;
+            let frame_reader: BoxedFrameReader = Box::new(frame_reader);
+            let frame_writer: BoxedFrameWriter = Box::new(frame_writer);
             reset_session = true;
             (frame_reader, frame_writer)
         }
@@ -155,12 +169,11 @@ async fn login(url: &Url) -> shvrpc::Result<(BoxedFrameReader, BoxedFrameWriter)
     let login_params = LoginParams {
         user,
         password,
-        reset_session,
         ..Default::default()
     };
     //let frame = frame_reader.receive_frame().await?;
     //frame_writer.send_frame(frame.expect("frame")).await?;
-    client::login(&mut *frame_reader, &mut *frame_writer, &login_params).await?;
+    client::login(&mut *frame_reader, &mut *frame_writer, &login_params, reset_session).await?;
     debug!("Connected to broker.");
     Ok((frame_reader, frame_writer))
 }
