@@ -221,9 +221,12 @@ async fn make_call(
                         resp.param().unwrap_or_default().to_cpon()
                     )
                 } else if resp.is_response() {
-                    match resp.result() {
-                        Ok(res) => {
+                    match resp.response() {
+                        Ok(shvrpc::rpcmessage::Response::Success(res)) => {
                             format!("RES {}\n", res.to_cpon())
+                        }
+                        Ok(shvrpc::rpcmessage::Response::Delay(res)) => {
+                            format!("DELAY {}\n", res)
                         }
                         Err(err) => {
                             format!("ERR {}\n", err)
@@ -243,8 +246,9 @@ async fn make_call(
                 let mut s = if resp.is_request() {
                     resp.param().unwrap_or_default().to_cpon()
                 } else if resp.is_response() {
-                    match resp.result() {
-                        Ok(res) => res.to_cpon(),
+                    match resp.response() {
+                        Ok(shvrpc::rpcmessage::Response::Success(res)) => res.to_cpon(),
+                        Ok(shvrpc::rpcmessage::Response::Delay(progress)) => format!("DELAY({progress})"),
                         Err(err) => err.to_string(),
                     }
                 } else {
@@ -257,9 +261,14 @@ async fn make_call(
                 const PATH: &str = "{PATH}";
                 const METHOD: &str = "{METHOD}";
                 const VALUE: &str = "{VALUE}";
+                let resp_value_cpon = match resp.response() {
+                    Ok(shvrpc::rpcmessage::Response::Success(val)) => val.to_cpon(),
+                    Ok(shvrpc::rpcmessage::Response::Delay(val)) => format!("DELAY: {val}"),
+                    Err(err) => format!("ERROR: {err}"),
+                };
                 let fmtstr = fmtstr.replace(PATH, resp.shv_path().unwrap_or_default());
                 let fmtstr = fmtstr.replace(METHOD, resp.method().unwrap_or_default());
-                let fmtstr = fmtstr.replace(VALUE, &resp.result().unwrap_or_default().to_cpon());
+                let fmtstr = fmtstr.replace(VALUE, &resp_value_cpon);
                 let fmtstr = fmtstr.replace("\\n", "\n");
                 let fmtstr = fmtstr.replace("\\t", "\t");
                 fmtstr.as_bytes().to_owned()
@@ -370,6 +379,7 @@ async fn make_call(
                                         )
                                         .await?;
                                         if resp.is_response()
+                                            && !resp.is_delay()
                                             && resp.request_id().unwrap_or_default() == rqid
                                         {
                                             break;
@@ -395,17 +405,6 @@ async fn make_call(
         };
         let param = opts.param.clone().unwrap_or_default();
         let rqid = send_request(&mut *frame_writer, &path, &method, &param).await?;
-        async fn receive_response(
-            frame_reader: &mut BoxedFrameReader,
-            rq_id: RqId,
-        ) -> shvrpc::Result<RpcFrame> {
-            loop {
-                let frame = frame_reader.receive_frame().await?;
-                if frame.is_response() && frame.request_id().unwrap_or_default() == rq_id {
-                    return Ok(frame);
-                }
-            }
-        }
         let res = if opts.timeout > 0 {
             match receive_response(&mut frame_reader, rqid)
                 .timeout(Duration::from_millis(opts.timeout))
@@ -440,7 +439,8 @@ async fn receive_response(
 ) -> shvrpc::Result<RpcFrame> {
     loop {
         let frame = frame_reader.receive_frame().await?;
-        if frame.is_response() && frame.request_id().unwrap_or_default() == rq_id {
+        let is_delay_frame = frame.to_rpcmesage().is_ok_and(|msg| msg.is_delay());
+        if frame.is_response() && !is_delay_frame && frame.request_id().unwrap_or_default() == rq_id {
             return Ok(frame);
         }
     }
@@ -631,8 +631,12 @@ async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, creat
                 Ok(frame) => {
                     let frame = frame?;
                     if frame.request_id().unwrap_or_default() == create_rqid {
-                        let tunid = frame.to_rpcmesage()?.result()?.as_str().parse::<u64>()?;
-                        break tunid;
+                        let rpcmsg = frame.to_rpcmesage()?;
+                        let resp = rpcmsg.response()?;
+                        if let shvrpc::rpcmessage::Response::Success(val) = resp {
+                            let tunid = val.as_str().parse::<u64>()?;
+                            break tunid;
+                        }
                     }
                 }
                 Err(e) => {
@@ -684,8 +688,13 @@ async fn process_broker_to_socket_frame(rqid: RqId, expected_seqno: SeqNo, frame
     if frame.request_id().unwrap_or_default() != rqid {
         return Ok(expected_seqno)
     }
-    let resp = frame.to_rpcmesage()?;
-    let data = resp.result()?.as_blob();
+    let rpcmsg = frame.to_rpcmesage()?;
+    let resp = rpcmsg.response()?;
+    let Some(resp) = resp.success() else {
+        warn!("Delay message received, ignoring data");
+        return Ok(expected_seqno);
+    };
+    let data = resp.as_blob();
     let seqno = frame.seqno();
     if let Some(seqno) = seqno {
         if expected_seqno > seqno {
