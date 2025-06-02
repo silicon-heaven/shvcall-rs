@@ -426,20 +426,13 @@ async fn receive_response(
     rq_id: RqId,
     timeout: Option<Duration>,
 ) -> shvrpc::Result<RpcFrame> {
-    let mut deadline = timeout.map(|t| Instant::now() + t);
+    const FOREVER: u64 = u64::MAX;
+    let request_timeout = timeout.unwrap_or_else(|| Duration::from_secs(FOREVER));
+    let mut time_left = request_timeout;
     loop {
-        let mut frame_future = frame_reader.receive_frame().fuse();
-        let timeout_future: Box<dyn Future<Output = ()> + Unpin + Send> = match deadline {
-            Some(deadline) => {
-                let time_left = deadline.saturating_duration_since(std::time::Instant::now());
-                Box::new(Box::pin(async move { smol::Timer::after(time_left).await; }))
-            }
-            None => Box::new(futures::future::pending()),
-        };
-        let mut timeout_future = timeout_future.fuse();
-
-        select! {
-            frame_res = frame_future => match frame_res {
+        let start_await = Instant::now();
+        match frame_reader.receive_frame().timeout(time_left).await {
+            Ok(frame_res) => match frame_res {
                 Err(err) => return Err(err.into()),
                 Ok(frame) => {
                     if frame.request_id().unwrap_or_default() == rq_id {
@@ -448,7 +441,7 @@ async fn receive_response(
                             .is_ok_and(|msg| msg.is_delay());
 
                         if is_delay_frame {
-                            deadline = timeout.map(|t| Instant::now() + t);
+                            time_left = request_timeout;
                             continue;
                         }
 
@@ -456,15 +449,20 @@ async fn receive_response(
                             return Ok(frame);
                         }
                     }
+                    if timeout.is_some() {
+                        let time_left_ms = time_left.as_millis() as u64;
+                        let start_await_ms = start_await.elapsed().as_millis() as u64;
+                        time_left = Duration::from_millis(time_left_ms.saturating_sub(start_await_ms));
+                    }
                 }
             },
-            _ = timeout_future => return Err(
+            Err(_) => return Err(
                 RpcError::new(
                     shvrpc::rpcmessage::RpcErrorCode::MethodCallTimeout,
                     format!("Method call timeout after {} ms", timeout.map(|t| t.as_millis()).unwrap_or_default())
                 )
-                .into()
-            )
+                .into(),
+                )
         }
     }
 }
