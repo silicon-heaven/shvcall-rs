@@ -225,8 +225,8 @@ async fn make_call(
                         Ok(shvrpc::rpcmessage::Response::Success(res)) => {
                             format!("RES {}\n", res.to_cpon())
                         }
-                        Ok(shvrpc::rpcmessage::Response::Delay(res)) => {
-                            format!("DELAY {}\n", res)
+                        Ok(shvrpc::rpcmessage::Response::Delay(_)) => {
+                            return Ok(())
                         }
                         Err(err) => {
                             format!("ERR {}\n", err)
@@ -248,7 +248,7 @@ async fn make_call(
                 } else if resp.is_response() {
                     match resp.response() {
                         Ok(shvrpc::rpcmessage::Response::Success(res)) => res.to_cpon(),
-                        Ok(shvrpc::rpcmessage::Response::Delay(progress)) => format!("DELAY({progress})"),
+                        Ok(shvrpc::rpcmessage::Response::Delay(_)) => return Ok(()),
                         Err(err) => err.to_string(),
                     }
                 } else {
@@ -263,8 +263,8 @@ async fn make_call(
                 const VALUE: &str = "{VALUE}";
                 let resp_value_cpon = match resp.response() {
                     Ok(shvrpc::rpcmessage::Response::Success(val)) => val.to_cpon(),
-                    Ok(shvrpc::rpcmessage::Response::Delay(val)) => format!("DELAY: {val}"),
-                    Err(err) => format!("ERROR: {err}"),
+                    Ok(shvrpc::rpcmessage::Response::Delay(_)) => return Ok(()),
+                    Err(err) => err.to_rpcvalue().to_cpon(),
                 };
                 let fmtstr = fmtstr.replace(PATH, resp.shv_path().unwrap_or_default());
                 let fmtstr = fmtstr.replace(METHOD, resp.method().unwrap_or_default());
