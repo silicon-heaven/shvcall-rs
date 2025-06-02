@@ -1,21 +1,21 @@
 use std::future::Future;
-use std::io::{Stdout};
+use std::io::Stdout;
 use smol::io::{AsyncBufReadExt, BufReader};
 use smol::net::{TcpListener, TcpStream};
 use smol::net::unix::UnixStream;
-use smol::{Unblock};
+use smol::Unblock;
 use clap::Parser;
 use futures::io::{BufWriter, WriteHalf};
-use futures::{AsyncWriteExt};
+use futures::AsyncWriteExt;
 use futures::{select, AsyncReadExt};
 use futures::{FutureExt, StreamExt};
 use futures_time::future::FutureExt as ff;
-use futures_time::time::Duration;
+use futures_time::time::{Duration, Instant};
 use log::*;
 use shvrpc::client::LoginParams;
 use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpcframe::RpcFrame;
-use shvrpc::rpcmessage::{RqId, SeqNo};
+use shvrpc::rpcmessage::{RpcError, RqId, SeqNo};
 use shvrpc::serialrw::{SerialFrameReader, SerialFrameWriter};
 use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
 use shvrpc::util::login_from_url;
@@ -226,7 +226,7 @@ async fn make_call(
                             format!("RES {}\n", res.to_cpon())
                         }
                         Ok(shvrpc::rpcmessage::Response::Delay(_)) => {
-                            return Ok(())
+                            panic!("Unexpected Delay response")
                         }
                         Err(err) => {
                             format!("ERR {}\n", err)
@@ -248,7 +248,7 @@ async fn make_call(
                 } else if resp.is_response() {
                     match resp.response() {
                         Ok(shvrpc::rpcmessage::Response::Success(res)) => res.to_cpon(),
-                        Ok(shvrpc::rpcmessage::Response::Delay(_)) => return Ok(()),
+                        Ok(shvrpc::rpcmessage::Response::Delay(_)) => panic!("Unexpected Delay response"),
                         Err(err) => err.to_string(),
                     }
                 } else {
@@ -263,7 +263,7 @@ async fn make_call(
                 const VALUE: &str = "{VALUE}";
                 let resp_value_cpon = match resp.response() {
                     Ok(shvrpc::rpcmessage::Response::Success(val)) => val.to_cpon(),
-                    Ok(shvrpc::rpcmessage::Response::Delay(_)) => return Ok(()),
+                    Ok(shvrpc::rpcmessage::Response::Delay(_)) => panic!("Unexpected Delay response"),
                     Err(err) => err.to_rpcvalue().to_cpon(),
                 };
                 let fmtstr = fmtstr.replace(PATH, resp.shv_path().unwrap_or_default());
@@ -405,23 +405,11 @@ async fn make_call(
         };
         let param = opts.param.clone().unwrap_or_default();
         let rqid = send_request(&mut *frame_writer, &path, &method, &param).await?;
-        let res = if opts.timeout > 0 {
-            match receive_response(&mut frame_reader, rqid)
-                .timeout(Duration::from_millis(opts.timeout))
-                .await
-            {
-                Ok(maybe_frame) => maybe_frame,
-                Err(_) => {
-                    return Err(format!(
-                        "Method call response timeout after {} msec.",
-                        opts.timeout
-                    )
-                    .into())
-                }
-            }
-        } else {
-            receive_response(&mut frame_reader, rqid).await
-        };
+        let res = receive_response(
+            &mut frame_reader,
+            rqid,
+            timeout_param_to_duration(opts.timeout),
+        ).await;
         return match res {
             Ok(frame) => {
                 let resp = frame.to_rpcmesage()?;
@@ -436,15 +424,59 @@ async fn make_call(
 async fn receive_response(
     frame_reader: &mut BoxedFrameReader,
     rq_id: RqId,
+    timeout: Option<Duration>,
 ) -> shvrpc::Result<RpcFrame> {
+    let mut deadline = timeout.map(|t| Instant::now() + t);
     loop {
-        let frame = frame_reader.receive_frame().await?;
-        let is_delay_frame = frame.to_rpcmesage().is_ok_and(|msg| msg.is_delay());
-        if frame.is_response() && !is_delay_frame && frame.request_id().unwrap_or_default() == rq_id {
-            return Ok(frame);
+        let mut frame_future = frame_reader.receive_frame().fuse();
+        let timeout_future: Box<dyn Future<Output = ()> + Unpin + Send> = match deadline {
+            Some(deadline) => {
+                let time_left = deadline.saturating_duration_since(std::time::Instant::now());
+                Box::new(Box::pin(async move { smol::Timer::after(time_left).await; }))
+            }
+            None => Box::new(futures::future::pending()),
+        };
+        let mut timeout_future = timeout_future.fuse();
+
+        select! {
+            frame_res = frame_future => match frame_res {
+                Err(err) => return Err(err.into()),
+                Ok(frame) => {
+                    if frame.request_id().unwrap_or_default() == rq_id {
+                        let is_delay_frame = frame
+                            .to_rpcmesage()
+                            .is_ok_and(|msg| msg.is_delay());
+
+                        if is_delay_frame {
+                            deadline = timeout.map(|t| Instant::now() + t);
+                            continue;
+                        }
+
+                        if frame.is_response() {
+                            return Ok(frame);
+                        }
+                    }
+                }
+            },
+            _ = timeout_future => return Err(
+                RpcError::new(
+                    shvrpc::rpcmessage::RpcErrorCode::MethodCallTimeout,
+                    format!("Method call timeout after {} ms", timeout.map(|t| t.as_millis()).unwrap_or_default())
+                )
+                .into()
+            )
         }
     }
 }
+
+fn timeout_param_to_duration(timeout_ms: u64) -> Option<Duration> {
+    if timeout_ms == 0 {
+        None
+    } else {
+        Some(Duration::from_millis(timeout_ms))
+    }
+}
+
 async fn make_burst_call(opts: &Opts) -> Result {
     if opts.method.is_none() {
         return Err("--method parameter missing".into());
@@ -468,6 +500,7 @@ async fn make_burst_call(opts: &Opts) -> Result {
         param: Option<RpcValue>,
         taskno: i32,
         count: i32,
+        timeout: Option<Duration>,
     ) {
         println!("Starting burst task #{taskno}, {count} calls of {path}:{method}");
         let (mut frame_reader, mut frame_writer) = login(&url).await.unwrap();
@@ -476,7 +509,7 @@ async fn make_burst_call(opts: &Opts) -> Result {
                 .send_request(&path, &method, param.clone())
                 .await
                 .unwrap();
-            receive_response(&mut frame_reader, rqid).await.unwrap();
+            receive_response(&mut frame_reader, rqid, timeout).await.unwrap();
         }
         println!("Burst task #{taskno} finished, after {count} calls made successfully.");
     }
@@ -490,6 +523,7 @@ async fn make_burst_call(opts: &Opts) -> Result {
                 param.clone(),
                 taskno + 1,
                 nmsg,
+                timeout_param_to_duration(opts.timeout),
             ))
         })
         .collect::<FuturesUnordered<_>>()
