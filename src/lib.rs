@@ -1,21 +1,21 @@
 use std::future::Future;
-use std::io::{Stdout};
+use std::io::Stdout;
 use smol::io::{AsyncBufReadExt, BufReader};
 use smol::net::{TcpListener, TcpStream};
 use smol::net::unix::UnixStream;
-use smol::{Unblock};
+use smol::Unblock;
 use clap::Parser;
 use futures::io::{BufWriter, WriteHalf};
-use futures::{AsyncWriteExt};
+use futures::AsyncWriteExt;
 use futures::{select, AsyncReadExt};
 use futures::{FutureExt, StreamExt};
 use futures_time::future::FutureExt as ff;
-use futures_time::time::Duration;
+use futures_time::time::{Duration, Instant};
 use log::*;
 use shvrpc::client::LoginParams;
 use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpcframe::RpcFrame;
-use shvrpc::rpcmessage::{RqId, SeqNo};
+use shvrpc::rpcmessage::{RpcError, RqId, SeqNo};
 use shvrpc::serialrw::{SerialFrameReader, SerialFrameWriter};
 use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
 use shvrpc::util::login_from_url;
@@ -221,9 +221,12 @@ async fn make_call(
                         resp.param().unwrap_or_default().to_cpon()
                     )
                 } else if resp.is_response() {
-                    match resp.result() {
-                        Ok(res) => {
+                    match resp.response() {
+                        Ok(shvrpc::rpcmessage::Response::Success(res)) => {
                             format!("RES {}\n", res.to_cpon())
+                        }
+                        Ok(shvrpc::rpcmessage::Response::Delay(_)) => {
+                            panic!("Unexpected Delay response")
                         }
                         Err(err) => {
                             format!("ERR {}\n", err)
@@ -243,8 +246,9 @@ async fn make_call(
                 let mut s = if resp.is_request() {
                     resp.param().unwrap_or_default().to_cpon()
                 } else if resp.is_response() {
-                    match resp.result() {
-                        Ok(res) => res.to_cpon(),
+                    match resp.response() {
+                        Ok(shvrpc::rpcmessage::Response::Success(res)) => res.to_cpon(),
+                        Ok(shvrpc::rpcmessage::Response::Delay(_)) => panic!("Unexpected Delay response"),
                         Err(err) => err.to_string(),
                     }
                 } else {
@@ -257,9 +261,14 @@ async fn make_call(
                 const PATH: &str = "{PATH}";
                 const METHOD: &str = "{METHOD}";
                 const VALUE: &str = "{VALUE}";
+                let resp_value_cpon = match resp.response() {
+                    Ok(shvrpc::rpcmessage::Response::Success(val)) => val.to_cpon(),
+                    Ok(shvrpc::rpcmessage::Response::Delay(_)) => panic!("Unexpected Delay response"),
+                    Err(err) => err.to_rpcvalue().to_cpon(),
+                };
                 let fmtstr = fmtstr.replace(PATH, resp.shv_path().unwrap_or_default());
                 let fmtstr = fmtstr.replace(METHOD, resp.method().unwrap_or_default());
-                let fmtstr = fmtstr.replace(VALUE, &resp.result().unwrap_or_default().to_cpon());
+                let fmtstr = fmtstr.replace(VALUE, &resp_value_cpon);
                 let fmtstr = fmtstr.replace("\\n", "\n");
                 let fmtstr = fmtstr.replace("\\t", "\t");
                 fmtstr.as_bytes().to_owned()
@@ -370,6 +379,7 @@ async fn make_call(
                                         )
                                         .await?;
                                         if resp.is_response()
+                                            && !resp.is_delay()
                                             && resp.request_id().unwrap_or_default() == rqid
                                         {
                                             break;
@@ -395,34 +405,11 @@ async fn make_call(
         };
         let param = opts.param.clone().unwrap_or_default();
         let rqid = send_request(&mut *frame_writer, &path, &method, &param).await?;
-        async fn receive_response(
-            frame_reader: &mut BoxedFrameReader,
-            rq_id: RqId,
-        ) -> shvrpc::Result<RpcFrame> {
-            loop {
-                let frame = frame_reader.receive_frame().await?;
-                if frame.is_response() && frame.request_id().unwrap_or_default() == rq_id {
-                    return Ok(frame);
-                }
-            }
-        }
-        let res = if opts.timeout > 0 {
-            match receive_response(&mut frame_reader, rqid)
-                .timeout(Duration::from_millis(opts.timeout))
-                .await
-            {
-                Ok(maybe_frame) => maybe_frame,
-                Err(_) => {
-                    return Err(format!(
-                        "Method call response timeout after {} msec.",
-                        opts.timeout
-                    )
-                    .into())
-                }
-            }
-        } else {
-            receive_response(&mut frame_reader, rqid).await
-        };
+        let res = receive_response(
+            &mut frame_reader,
+            rqid,
+            timeout_param_to_duration(opts.timeout),
+        ).await;
         return match res {
             Ok(frame) => {
                 let resp = frame.to_rpcmesage()?;
@@ -437,14 +424,57 @@ async fn make_call(
 async fn receive_response(
     frame_reader: &mut BoxedFrameReader,
     rq_id: RqId,
+    timeout: Option<Duration>,
 ) -> shvrpc::Result<RpcFrame> {
+    const FOREVER: u64 = u64::MAX;
+    let request_timeout = timeout.unwrap_or_else(|| Duration::from_secs(FOREVER));
+    let mut time_left = request_timeout;
     loop {
-        let frame = frame_reader.receive_frame().await?;
-        if frame.is_response() && frame.request_id().unwrap_or_default() == rq_id {
-            return Ok(frame);
+        let start_await = Instant::now();
+        match frame_reader.receive_frame().timeout(time_left).await {
+            Ok(frame_res) => match frame_res {
+                Err(err) => return Err(err.into()),
+                Ok(frame) => {
+                    if frame.request_id().unwrap_or_default() == rq_id {
+                        let is_delay_frame = frame
+                            .to_rpcmesage()
+                            .is_ok_and(|msg| msg.is_delay());
+
+                        if is_delay_frame {
+                            time_left = request_timeout;
+                            continue;
+                        }
+
+                        if frame.is_response() {
+                            return Ok(frame);
+                        }
+                    }
+                    if timeout.is_some() {
+                        let time_left_ms = time_left.as_millis() as u64;
+                        let start_await_ms = start_await.elapsed().as_millis() as u64;
+                        time_left = Duration::from_millis(time_left_ms.saturating_sub(start_await_ms));
+                    }
+                }
+            },
+            Err(_) => return Err(
+                RpcError::new(
+                    shvrpc::rpcmessage::RpcErrorCode::MethodCallTimeout,
+                    format!("Method call timeout after {} ms", timeout.map(|t| t.as_millis()).unwrap_or_default())
+                )
+                .into(),
+                )
         }
     }
 }
+
+fn timeout_param_to_duration(timeout_ms: u64) -> Option<Duration> {
+    if timeout_ms == 0 {
+        None
+    } else {
+        Some(Duration::from_millis(timeout_ms))
+    }
+}
+
 async fn make_burst_call(opts: &Opts) -> Result {
     if opts.method.is_none() {
         return Err("--method parameter missing".into());
@@ -468,6 +498,7 @@ async fn make_burst_call(opts: &Opts) -> Result {
         param: Option<RpcValue>,
         taskno: i32,
         count: i32,
+        timeout: Option<Duration>,
     ) {
         println!("Starting burst task #{taskno}, {count} calls of {path}:{method}");
         let (mut frame_reader, mut frame_writer) = login(&url).await.unwrap();
@@ -476,7 +507,7 @@ async fn make_burst_call(opts: &Opts) -> Result {
                 .send_request(&path, &method, param.clone())
                 .await
                 .unwrap();
-            receive_response(&mut frame_reader, rqid).await.unwrap();
+            receive_response(&mut frame_reader, rqid, timeout).await.unwrap();
         }
         println!("Burst task #{taskno} finished, after {count} calls made successfully.");
     }
@@ -490,6 +521,7 @@ async fn make_burst_call(opts: &Opts) -> Result {
                 param.clone(),
                 taskno + 1,
                 nmsg,
+                timeout_param_to_duration(opts.timeout),
             ))
         })
         .collect::<FuturesUnordered<_>>()
@@ -501,7 +533,7 @@ async fn make_burst_call(opts: &Opts) -> Result {
 
 fn split_quoted(s: &str) -> Vec<&str> {
     let mut wrapped = false;
-    let ret = s
+    s
         .split(|c| {
             if c == '[' {
                 wrapped = true;
@@ -510,8 +542,7 @@ fn split_quoted(s: &str) -> Vec<&str> {
             }
             c == ':' && !wrapped
         })
-        .collect::<Vec<&str>>();
-    ret
+        .collect::<Vec<&str>>()
 }
 #[derive(Debug)]
 struct Tunnel {
@@ -631,8 +662,12 @@ async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, creat
                 Ok(frame) => {
                     let frame = frame?;
                     if frame.request_id().unwrap_or_default() == create_rqid {
-                        let tunid = frame.to_rpcmesage()?.result()?.as_str().parse::<u64>()?;
-                        break tunid;
+                        let rpcmsg = frame.to_rpcmesage()?;
+                        let resp = rpcmsg.response()?;
+                        if let shvrpc::rpcmessage::Response::Success(val) = resp {
+                            let tunid = val.as_str().parse::<u64>()?;
+                            break tunid;
+                        }
                     }
                 }
                 Err(e) => {
@@ -684,8 +719,13 @@ async fn process_broker_to_socket_frame(rqid: RqId, expected_seqno: SeqNo, frame
     if frame.request_id().unwrap_or_default() != rqid {
         return Ok(expected_seqno)
     }
-    let resp = frame.to_rpcmesage()?;
-    let data = resp.result()?.as_blob();
+    let rpcmsg = frame.to_rpcmesage()?;
+    let resp = rpcmsg.response()?;
+    let Some(resp) = resp.success() else {
+        warn!("Delay message received, ignoring data");
+        return Ok(expected_seqno);
+    };
+    let data = resp.as_blob();
     let seqno = frame.seqno();
     if let Some(seqno) = seqno {
         if expected_seqno > seqno {
