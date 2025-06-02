@@ -535,7 +535,7 @@ async fn make_burst_call(opts: &Opts) -> Result {
 
 fn split_quoted(s: &str) -> Vec<&str> {
     let mut wrapped = false;
-    let ret = s
+    s
         .split(|c| {
             if c == '[' {
                 wrapped = true;
@@ -544,8 +544,7 @@ fn split_quoted(s: &str) -> Vec<&str> {
             }
             c == ':' && !wrapped
         })
-        .collect::<Vec<&str>>();
-    ret
+        .collect::<Vec<&str>>()
 }
 #[derive(Debug)]
 struct Tunnel {
