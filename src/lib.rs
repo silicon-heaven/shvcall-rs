@@ -1,5 +1,8 @@
 use std::future::Future;
 use std::io::Stdout;
+use std::pin::pin;
+use futures::future::{pending, select};
+use futures_time::task::sleep_until;
 use smol::io::{AsyncBufReadExt, BufReader};
 use smol::net::{TcpListener, TcpStream};
 use smol::net::unix::UnixStream;
@@ -426,13 +429,17 @@ async fn receive_response(
     rq_id: RqId,
     timeout: Option<Duration>,
 ) -> shvrpc::Result<RpcFrame> {
-    const FOREVER: u64 = u64::MAX;
-    let request_timeout = timeout.unwrap_or_else(|| Duration::from_secs(FOREVER));
-    let mut time_left = request_timeout;
+    let mut deadline = timeout.map(|t| Instant::now() + t);
     loop {
-        let start_await = Instant::now();
-        match frame_reader.receive_frame().timeout(time_left).await {
-            Ok(frame_res) => match frame_res {
+        let timeout_fut = pin!(async move {
+            if let Some(deadline) = deadline {
+                sleep_until(deadline).await;
+            } else {
+                pending::<()>().await;
+            }
+        });
+        match select(frame_reader.receive_frame(), timeout_fut).await {
+            futures::future::Either::Left((frame_res, _)) => match frame_res {
                 Err(err) => return Err(err.into()),
                 Ok(frame) => {
                     if frame.request_id().unwrap_or_default() == rq_id {
@@ -441,7 +448,7 @@ async fn receive_response(
                             .is_ok_and(|msg| msg.is_delay());
 
                         if is_delay_frame {
-                            time_left = request_timeout;
+                            deadline = timeout.map(|t| Instant::now() + t);
                             continue;
                         }
 
@@ -449,20 +456,15 @@ async fn receive_response(
                             return Ok(frame);
                         }
                     }
-                    if timeout.is_some() {
-                        let time_left_ms = time_left.as_millis() as u64;
-                        let start_await_ms = start_await.elapsed().as_millis() as u64;
-                        time_left = Duration::from_millis(time_left_ms.saturating_sub(start_await_ms));
-                    }
                 }
             },
-            Err(_) => return Err(
+            futures::future::Either::Right(_) => return Err(
                 RpcError::new(
                     shvrpc::rpcmessage::RpcErrorCode::MethodCallTimeout,
                     format!("Method call timeout after {} ms", timeout.map(|t| t.as_millis()).unwrap_or_default())
                 )
                 .into(),
-                )
+                ),
         }
     }
 }
