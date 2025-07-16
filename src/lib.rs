@@ -58,7 +58,7 @@ pub struct Opts {
     /// Timeout in milliseconds, value 0 means wait forever.
     #[arg(short, long, default_value = "5000")]
     pub timeout: u64,
-    /// Output format: [ cpon | icpon | chainpack | simple | value | "Placeholders {PATH} {METHOD} {VALUE} in any number and combination in custom string." ]
+    /// Output format: [ cpon | icpon | chainpack | simple | value | custom "format" ] Placeholders {PATH} {METHOD} {VALUE} in any number and combination will be replaced in format string.
     #[arg(short = 'o', long = "output-format", default_value = "cpon")]
     pub output_format: String,
     /// Create TCP tunnel, SSH like syntax, example: -L 2222:some.host.org:22
@@ -104,7 +104,7 @@ where
 {
     smol::spawn(async move {
         if let Err(e) = fut.await {
-            error!("{}", e)
+            error!("{e}")
         }
     }).detach();
 }
@@ -232,7 +232,7 @@ async fn make_call(
                             panic!("Unexpected Delay response")
                         }
                         Err(err) => {
-                            format!("ERR {}\n", err)
+                            format!("ERR {err}\n")
                         }
                     }
                 } else {
@@ -316,7 +316,7 @@ async fn make_call(
                                     let rqid = match send_request(&mut *frame_writer, path, method, param).await {
                                         Ok(rqid) => {rqid}
                                         Err(err) => {
-                                            writeln!(rl_stdout, "{}", err)?;
+                                            writeln!(rl_stdout, "{err}")?;
                                             continue;
                                         }
                                     };
@@ -336,7 +336,7 @@ async fn make_call(
                                     }
                                 }
                                 Err(err) => {
-                                    writeln!(rl_stdout, "{}", err)?;
+                                    writeln!(rl_stdout, "{err}")?;
                                 }
                             }
                         }
@@ -350,7 +350,7 @@ async fn make_call(
                         }
                         // Err(ReadlineError::Closed) => break, // Readline was closed via one way or another, cleanup other futures here and break out of the loop
                         Err(err) => {
-                            error!("readline error: {:?}", err);
+                            error!("readline error: {err:?}");
                             break;
                         }
                     }
@@ -673,7 +673,7 @@ async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, creat
                     }
                 }
                 Err(e) => {
-                    return Err(format!("Creating tunnel timeout: {}", e).into());
+                    return Err(format!("Creating tunnel timeout: {e}").into());
                 }
             }
         }
