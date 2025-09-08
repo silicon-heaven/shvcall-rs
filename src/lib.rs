@@ -50,26 +50,38 @@ pub struct Opts {
     ///Url to connect to, example tcp://admin@localhost:3755?password=dj4j5HHb, localsocket:path/to/socket
     #[arg(short = 's', long = "url")]
     pub url: Url,
+
     /// Method is specified together with path like: shv/path:method
     #[arg(short, long)]
     pub method: Option<String>,
+
     #[arg(short, long)]
     pub param: Option<String>,
+
+    #[arg(short, long)]
+    pub user_id: Option<String>,
+
     /// Timeout in milliseconds, value 0 means wait forever.
     #[arg(short, long, default_value = "5000")]
     pub timeout: u64,
+
     /// Output format: [ cpon | icpon | chainpack | simple | value | custom "format" ] Placeholders {PATH} {METHOD} {VALUE} in any number and combination will be replaced in format string.
     #[arg(short = 'o', long = "output-format", default_value = "cpon")]
     pub output_format: String,
+
     /// Create TCP tunnel, SSH like syntax, example: -L 2222:some.host.org:22
     #[arg(short = 'L', long)]
     pub tunnel: Option<String>,
+
     /// Send N request in M threads, format is N[,M], default M == 1
     #[arg(long)]
     pub burst: Option<String>,
+
     /// Verbose mode (module, .)
     #[arg(short, long)]
     pub verbose: Option<String>,
+
+    /// Print version and exit
     #[arg(long)]
     pub version: bool,
 }
@@ -185,13 +197,14 @@ async fn send_request(
     path: &str,
     method: &str,
     param: &str,
+    user_id: Option<&str>,
 ) -> shvrpc::Result<RqId> {
     let param = if param.is_empty() {
         None
     } else {
         Some(RpcValue::from_cpon(param)?)
     };
-    frame_writer.send_request(path, method, param).await
+    frame_writer.send_request_user_id(path, method, param, user_id).await
 }
 async fn make_call(
     mut frame_reader: BoxedFrameReader,
@@ -371,7 +384,7 @@ async fn make_call(
                             match parse_line(&line) {
                                 Ok((path, method, param)) => {
                                     let rqid =
-                                        send_request(&mut *frame_writer, path, method, param)
+                                        send_request(&mut *frame_writer, path, method, param, opts.user_id.as_deref())
                                             .await?;
                                     loop {
                                         let resp = frame_reader.receive_message().await?;
@@ -407,7 +420,7 @@ async fn make_call(
             return Err("--method parameter must be in form shv/path:method".into());
         };
         let param = opts.param.clone().unwrap_or_default();
-        let rqid = send_request(&mut *frame_writer, &path, &method, &param).await?;
+        let rqid = send_request(&mut *frame_writer, &path, &method, &param, opts.user_id.as_deref()).await?;
         let res = receive_response(
             &mut frame_reader,
             rqid,
