@@ -1469,7 +1469,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shvcall"
-version = "3.8.3"
+version = "3.8.5"
 dependencies = [
  "async-channel 2.5.0",
  "clap",
@@ -1500,8 +1500,8 @@ dependencies = [
 
 [[package]]
 name = "shvrpc"
-version = "3.8.2"
-source = "git+https://github.com/silicon-heaven/libshvrpc-rs.git?branch=master#05c9fabaaffa4149d05176ff4c7364584415bf51"
+version = "3.8.3"
+source = "git+https://github.com/silicon-heaven/libshvrpc-rs.git?branch=master#a4d2d8d4471460f68c47e809131d2fdcd2a0c9a1"
 dependencies = [
  "anyhow",
  "async-trait",

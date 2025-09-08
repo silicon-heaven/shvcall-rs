@@ -326,7 +326,7 @@ async fn make_call(
                             rl.add_history_entry(line.to_owned());
                             match parse_line(line) {
                                 Ok((path, method, param)) => {
-                                    let rqid = match send_request(&mut *frame_writer, path, method, param).await {
+                                    let rqid = match send_request(&mut *frame_writer, path, method, param, opts.user_id.as_deref()).await {
                                         Ok(rqid) => {rqid}
                                         Err(err) => {
                                             writeln!(rl_stdout, "{err}")?;
