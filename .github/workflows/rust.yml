@@ -64,20 +64,25 @@ jobs:
           pattern: '*-latest-nightly-binary'
           merge-multiple: true
 
+          # Needed for action-create-tag
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - uses: rickstaa/action-create-tag@v1
+        with:
+          tag: "nightly"
+          force_push_tag: true
+
       - name: Rename artifacts
         run: |
           SHVCALL_FILE_NAME="$(printf "shvcall-nightly-g%s" "$(head -c 7 <<< '${{github.sha}}')")"
           mv shvcall "${SHVCALL_FILE_NAME}"
 
-      - name: Remove previous Nightly assets
-        run: |
-          REPO='${{github.repository}}'
-          readarray -t PREVIOUS_ASSETS < <(gh release --repo "$REPO" view nightly --json assets --jq .assets[].name)
-          for PREVIOUS_ASSET in "${PREVIOUS_ASSETS[@]}"; do
-            gh release --repo "$REPO" delete-asset nightly "${PREVIOUS_ASSET}" --yes
-          done
+      - name: Delete previous nightly release
         env:
           GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+        run:
+          gh release delete nightly
 
       - name: Release
         uses: softprops/action-gh-release@v2
