@@ -58,13 +58,7 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
     steps:
-      - name: Consolidate artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: '*-latest-nightly-binary'
-          merge-multiple: true
-
-          # Needed for action-create-tag
+      # Needed for action-create-tag
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -72,6 +66,12 @@ jobs:
         with:
           tag: "nightly"
           force_push_tag: true
+
+      - name: Consolidate artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*-latest-nightly-binary'
+          merge-multiple: true
 
       - name: Rename artifacts
         run: |
