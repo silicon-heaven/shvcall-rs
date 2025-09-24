@@ -58,14 +58,8 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
     steps:
-      # Needed for action-create-tag
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - uses: rickstaa/action-create-tag@v1
-        with:
-          tag: "nightly"
-          force_push_tag: true
 
       - name: Consolidate artifacts
         uses: actions/download-artifact@v4
@@ -78,24 +72,12 @@ jobs:
           SHVCALL_FILE_NAME="$(printf "shvcall-nightly-g%s" "$(head -c 7 <<< '${{github.sha}}')")"
           mv shvcall "${SHVCALL_FILE_NAME}"
 
-      - name: Delete previous nightly release
+      - name: Create release
         env:
           GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
-        run:
-          gh release delete nightly
-
-      - name: Release
-        uses: softprops/action-gh-release@v2
+        uses: silicon-heaven/rust-nightly-release-action@v1.0.0
         with:
-          name: Nightly
-          tag_name: nightly
-          fail_on_unmatched_files: true
-          body: |
-            The latest and greatest.
-
-            This is a nightly release. If you find any bugs, please report them to the repository's issue tracker.
-          files: |
-             shvcall*
+          path_glob: shvcall*
 
   coverage:
     name: Code coverage
