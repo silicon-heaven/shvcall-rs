@@ -43,7 +43,7 @@ jobs:
     - name: Build and Install Binary
       run: |
         mkdir -p ${{github.workspace}}/install
-        cargo install --path '${{github.workspace}}' --root '${{github.workspace}}/install' --target ${{ matrix.target }}
+        cargo install --path '${{github.workspace}}' --root '${{github.workspace}}/install' --target ${{ matrix.target }} --locked
       shell: bash
 
     - name: Upload Artifact
