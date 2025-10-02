@@ -58,6 +58,11 @@ pub struct Opts {
     #[arg(short, long)]
     pub param: Option<String>,
 
+    /// Read param from a file, takes precedence over `--param`, pass "-" to read param from
+    /// standard input
+    #[arg(long)]
+    pub param_file: Option<String>,
+
     #[arg(short, long)]
     pub user_id: Option<String>,
 
@@ -192,20 +197,7 @@ async fn login(url: &Url) -> shvrpc::Result<(BoxedFrameReader, BoxedFrameWriter)
     debug!("Connected to broker.");
     Ok((frame_reader, frame_writer))
 }
-async fn send_request(
-    frame_writer: &mut (dyn FrameWriter + Send),
-    path: &str,
-    method: &str,
-    param: &str,
-    user_id: Option<&str>,
-) -> shvrpc::Result<RqId> {
-    let param = if param.is_empty() {
-        None
-    } else {
-        Some(RpcValue::from_cpon(param)?)
-    };
-    frame_writer.send_request_user_id(path, method, param, user_id).await
-}
+
 async fn make_call(
     mut frame_reader: BoxedFrameReader,
     mut frame_writer: BoxedFrameWriter,
@@ -326,7 +318,7 @@ async fn make_call(
                             rl.add_history_entry(line.to_owned());
                             match parse_line(line) {
                                 Ok((path, method, param)) => {
-                                    let rqid = match send_request(&mut *frame_writer, path, method, param, opts.user_id.as_deref()).await {
+                                    let rqid = match frame_writer.send_request_user_id(path, method, Some(RpcValue::from_cpon(param)?), opts.user_id.as_deref()).await {
                                         Ok(rqid) => {rqid}
                                         Err(err) => {
                                             writeln!(rl_stdout, "{err}")?;
@@ -384,7 +376,7 @@ async fn make_call(
                             match parse_line(&line) {
                                 Ok((path, method, param)) => {
                                     let rqid =
-                                        send_request(&mut *frame_writer, path, method, param, opts.user_id.as_deref())
+                                        frame_writer.send_request_user_id(path, method, Some(RpcValue::from_cpon(param)?), opts.user_id.as_deref())
                                             .await?;
                                     loop {
                                         let resp = frame_reader.receive_message().await?;
@@ -419,8 +411,8 @@ async fn make_call(
         } else {
             return Err("--method parameter must be in form shv/path:method".into());
         };
-        let param = opts.param.clone().unwrap_or_default();
-        let rqid = send_request(&mut *frame_writer, &path, &method, &param, opts.user_id.as_deref()).await?;
+        let param = extract_param_from_opts(opts)?;
+        let rqid = frame_writer.send_request_user_id(&path, &method, param, opts.user_id.as_deref()).await?;
         let res = receive_response(
             &mut frame_reader,
             rqid,
@@ -490,6 +482,26 @@ fn timeout_param_to_duration(timeout_ms: u64) -> Option<Duration> {
     }
 }
 
+fn extract_param_from_opts(opts: &Opts) -> shvrpc::Result<Option<RpcValue>> {
+    let param_string = if let Some(param_file_path) = &opts.param_file {
+        if opts.param.is_some() {
+            warn!("Warning: both param_file and param are set; using param_file");
+        }
+
+        if param_file_path == "-" {
+            &std::io::read_to_string(std::io::stdin())?
+        } else {
+            &std::fs::read_to_string(param_file_path)?
+        }
+    } else if let Some(param_cpon) = &opts.param {
+        param_cpon
+    } else {
+        return Ok(None);
+    };
+
+    Ok(RpcValue::from_cpon(param_string).map(Some)?)
+}
+
 async fn make_burst_call(opts: &Opts) -> Result {
     if opts.method.is_none() {
         return Err("--method parameter missing".into());
@@ -505,7 +517,7 @@ async fn make_burst_call(opts: &Opts) -> Result {
     };
     let method = opts.method.clone().unwrap();
     let ri = ShvRI::try_from(method)?;
-    let param = opts.param.clone().map(|p| RpcValue::from_cpon(&p).unwrap());
+    let param = extract_param_from_opts(opts)?;
     async fn burst_task(
         url: Url,
         path: String,
