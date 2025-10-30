@@ -1,6 +1,6 @@
 [package]
 name = "shvcall"
-version = "3.9.0"
+version = "3.9.1"
 edition = "2024"
 
 [[bin]]
@@ -12,8 +12,8 @@ serial = ["dep:serialport"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-shvproto = { git = "https://github.com/silicon-heaven/libshvproto-rs.git", branch = "master" }
-shvrpc = { git = "https://github.com/silicon-heaven/libshvrpc-rs.git", branch = "master" }
+shvproto = { git = "https://github.com/silicon-heaven/libshvproto-rs.git", tag = "3.6.2" }
+shvrpc = { git = "https://github.com/silicon-heaven/libshvrpc-rs.git", tag = "3.11.3" }
 futures = "0.3.29"
 smol = "2"
 log = "0.4.20"
