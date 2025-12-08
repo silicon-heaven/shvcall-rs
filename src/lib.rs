@@ -82,6 +82,10 @@ pub struct Opts {
     #[arg(long)]
     pub burst: Option<String>,
 
+    /// Add user-agent string to login parameters
+    #[arg(short = 'a', long)]
+    pub user_agent: Option<String>,
+
     /// Verbose mode (module, .)
     #[arg(short, long)]
     pub verbose: Option<String>,
@@ -132,7 +136,7 @@ fn is_tty() -> bool {
     #[cfg(not(feature = "readline"))]
     return false;
 }
-async fn login(url: &Url) -> shvrpc::Result<(BoxedFrameReader, BoxedFrameWriter)> {
+async fn login(url: &Url, user_agent: String) -> shvrpc::Result<(BoxedFrameReader, BoxedFrameWriter)> {
     // Establish a connection
     debug!("Connecting to: {url}");
     let mut reset_session = false;
@@ -189,6 +193,7 @@ async fn login(url: &Url) -> shvrpc::Result<(BoxedFrameReader, BoxedFrameWriter)
     let login_params = LoginParams {
         user,
         password,
+        user_agent,
         ..Default::default()
     };
     //let frame = frame_reader.receive_frame().await?;
@@ -518,6 +523,8 @@ async fn make_burst_call(opts: &Opts) -> Result {
     let method = opts.method.clone().unwrap();
     let ri = ShvRI::try_from(method)?;
     let param = extract_param_from_opts(opts)?;
+
+    #[allow(clippy::too_many_arguments)]
     async fn burst_task(
         url: Url,
         path: String,
@@ -526,9 +533,10 @@ async fn make_burst_call(opts: &Opts) -> Result {
         taskno: i32,
         count: i32,
         timeout: Option<Duration>,
+        user_agent: String
     ) {
         println!("Starting burst task #{taskno}, {count} calls of {path}:{method}");
-        let (mut frame_reader, mut frame_writer) = login(&url).await.unwrap();
+        let (mut frame_reader, mut frame_writer) = login(&url, user_agent).await.unwrap();
         for _ in 0..count {
             let rqid = frame_writer
                 .send_request(&path, &method, param.clone())
@@ -538,6 +546,7 @@ async fn make_burst_call(opts: &Opts) -> Result {
         }
         println!("Burst task #{taskno} finished, after {count} calls made successfully.");
     }
+
     let url = opts.url.clone();
     (0..ntask)
         .map(|taskno| {
@@ -549,6 +558,7 @@ async fn make_burst_call(opts: &Opts) -> Result {
                 taskno + 1,
                 nmsg,
                 timeout_param_to_duration(opts.timeout),
+                opts.user_agent.clone().unwrap_or_default()
             ))
         })
         .collect::<FuturesUnordered<_>>()
@@ -781,7 +791,7 @@ pub async fn try_main(opts: Opts) -> Result {
     if opts.burst.is_some() {
         return make_burst_call(&opts).await;
     }
-    let (frame_reader, frame_writer) = login(&opts.url).await?;
+    let (frame_reader, frame_writer) = login(&opts.url, opts.user_agent.clone().unwrap_or_default()).await?;
     let res = if opts.tunnel.is_some() {
         start_tunnel_server(frame_reader, frame_writer, &opts).await
     } else {
