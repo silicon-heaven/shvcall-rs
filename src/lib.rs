@@ -82,6 +82,10 @@ pub struct Opts {
     #[arg(long)]
     pub burst: Option<String>,
 
+    /// Add user-agent string to login parameters
+    #[arg(short = 'a', long)]
+    pub user_agent: Option<String>,
+
     /// Verbose mode (module, .)
     #[arg(short, long)]
     pub verbose: Option<String>,
@@ -89,6 +93,34 @@ pub struct Opts {
     /// Print version and exit
     #[arg(long)]
     pub version: bool,
+}
+
+impl Opts {
+    fn extract_param(&self) -> shvrpc::Result<Option<RpcValue>> {
+        let param_string = if let Some(param_file_path) = &self.param_file {
+            if self.param.is_some() {
+                warn!("Warning: both param_file and param are set; using param_file");
+            }
+
+            if param_file_path == "-" {
+                &std::io::read_to_string(std::io::stdin())?
+            } else {
+                &std::fs::read_to_string(param_file_path)?
+            }
+        } else if let Some(param_cpon) = &self.param {
+            param_cpon
+        } else {
+            return Ok(None);
+        };
+
+        Ok(RpcValue::from_cpon(param_string).map(Some)?)
+    }
+
+    fn extract_user_agent(&self) -> String {
+        let app_name = env!("CARGO_PKG_NAME");
+        let app_version = env!("CARGO_PKG_VERSION");
+        self.user_agent.clone().unwrap_or(format!("{app_name} {app_version}"))
+    }
 }
 
 enum OutputFormat {
@@ -132,7 +164,7 @@ fn is_tty() -> bool {
     #[cfg(not(feature = "readline"))]
     return false;
 }
-async fn login(url: &Url) -> shvrpc::Result<(BoxedFrameReader, BoxedFrameWriter)> {
+async fn login(url: &Url, user_agent: String) -> shvrpc::Result<(BoxedFrameReader, BoxedFrameWriter)> {
     // Establish a connection
     debug!("Connecting to: {url}");
     let mut reset_session = false;
@@ -189,6 +221,7 @@ async fn login(url: &Url) -> shvrpc::Result<(BoxedFrameReader, BoxedFrameWriter)
     let login_params = LoginParams {
         user,
         password,
+        user_agent,
         ..Default::default()
     };
     //let frame = frame_reader.receive_frame().await?;
@@ -411,7 +444,7 @@ async fn make_call(
         } else {
             return Err("--method parameter must be in form shv/path:method".into());
         };
-        let param = extract_param_from_opts(opts)?;
+        let param = opts.extract_param()?;
         let rqid = frame_writer.send_request_user_id(&path, &method, param, opts.user_id.as_deref()).await?;
         let res = receive_response(
             &mut frame_reader,
@@ -482,26 +515,6 @@ fn timeout_param_to_duration(timeout_ms: u64) -> Option<Duration> {
     }
 }
 
-fn extract_param_from_opts(opts: &Opts) -> shvrpc::Result<Option<RpcValue>> {
-    let param_string = if let Some(param_file_path) = &opts.param_file {
-        if opts.param.is_some() {
-            warn!("Warning: both param_file and param are set; using param_file");
-        }
-
-        if param_file_path == "-" {
-            &std::io::read_to_string(std::io::stdin())?
-        } else {
-            &std::fs::read_to_string(param_file_path)?
-        }
-    } else if let Some(param_cpon) = &opts.param {
-        param_cpon
-    } else {
-        return Ok(None);
-    };
-
-    Ok(RpcValue::from_cpon(param_string).map(Some)?)
-}
-
 async fn make_burst_call(opts: &Opts) -> Result {
     if opts.method.is_none() {
         return Err("--method parameter missing".into());
@@ -517,7 +530,9 @@ async fn make_burst_call(opts: &Opts) -> Result {
     };
     let method = opts.method.clone().unwrap();
     let ri = ShvRI::try_from(method)?;
-    let param = extract_param_from_opts(opts)?;
+    let param = opts.extract_param()?;
+
+    #[allow(clippy::too_many_arguments)]
     async fn burst_task(
         url: Url,
         path: String,
@@ -526,9 +541,10 @@ async fn make_burst_call(opts: &Opts) -> Result {
         taskno: i32,
         count: i32,
         timeout: Option<Duration>,
+        user_agent: String
     ) {
         println!("Starting burst task #{taskno}, {count} calls of {path}:{method}");
-        let (mut frame_reader, mut frame_writer) = login(&url).await.unwrap();
+        let (mut frame_reader, mut frame_writer) = login(&url, user_agent).await.unwrap();
         for _ in 0..count {
             let rqid = frame_writer
                 .send_request(&path, &method, param.clone())
@@ -538,6 +554,7 @@ async fn make_burst_call(opts: &Opts) -> Result {
         }
         println!("Burst task #{taskno} finished, after {count} calls made successfully.");
     }
+
     let url = opts.url.clone();
     (0..ntask)
         .map(|taskno| {
@@ -549,6 +566,7 @@ async fn make_burst_call(opts: &Opts) -> Result {
                 taskno + 1,
                 nmsg,
                 timeout_param_to_duration(opts.timeout),
+                opts.extract_user_agent()
             ))
         })
         .collect::<FuturesUnordered<_>>()
@@ -781,7 +799,7 @@ pub async fn try_main(opts: Opts) -> Result {
     if opts.burst.is_some() {
         return make_burst_call(&opts).await;
     }
-    let (frame_reader, frame_writer) = login(&opts.url).await?;
+    let (frame_reader, frame_writer) = login(&opts.url, opts.extract_user_agent()).await?;
     let res = if opts.tunnel.is_some() {
         start_tunnel_server(frame_reader, frame_writer, &opts).await
     } else {
