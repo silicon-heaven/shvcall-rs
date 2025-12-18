@@ -91,13 +91,6 @@ jobs:
         with:
           project_name: shvcall
 
-  check-version-bump:
-    name: Check version bump
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check version bump
-        uses: silicon-heaven/rust-check-version-bump@v1.0.0
-
   upload-crates-io:
     name: Publish crates on crates.io
     if: github.ref == 'refs/heads/master'
