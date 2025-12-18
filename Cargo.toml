@@ -12,8 +12,8 @@ serial = ["dep:serialport"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-shvproto = { git = "https://github.com/silicon-heaven/libshvproto-rs.git", tag = "3.6.22" }
-shvrpc = { git = "https://github.com/silicon-heaven/libshvrpc-rs.git", tag = "6.0.0" }
+shvproto = "3.6.28"
+shvrpc = "7.1.5"
 futures = "0.3.29"
 smol = "2"
 log = "0.4.20"
