@@ -125,3 +125,20 @@ jobs:
       - run: |
           cargo login <<< "${{secrets.CRATES_IO_TOKEN}}"
           cargo publish
+
+  nix:
+    name: NixOS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31.9.0
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+      - name: Build
+        run: nix --experimental-features 'nix-command flakes' build
+      - name: Flake check
+        run: nix --experimental-features 'nix-command flakes' flake check
+      - name: Format
+        run: nix --experimental-features 'nix-command flakes' fmt . && git diff --exit-code
