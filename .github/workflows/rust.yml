@@ -19,6 +19,7 @@ env:
 permissions:
   # For syyyr/rust-pycobertura-action
   pull-requests: write
+  contents: write
 
 jobs:
   build:
