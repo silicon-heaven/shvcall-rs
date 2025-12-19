@@ -21,10 +21,6 @@
         src = ./.;
         cargoLock = {
           lockFile = ./Cargo.lock;
-          outputHashes = {
-            "libshvproto-macros-0.2.0" = "sha256-A66OGwzA5Uc8p0P2Bv51jW2dAxMZsA+nXhreV0NCIxQ=";
-            "shvrpc-3.11.3" = "sha256-v6flcHHGL/cpmQoWWuHj/DQSiD/A+QlNpCBz0Pi0VJk=";
-          };
         };
         doCheck = true;
 
