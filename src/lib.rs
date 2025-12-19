@@ -5,6 +5,7 @@ use futures::future::{pending, select};
 use futures_time::task::sleep_until;
 use smol::io::{AsyncBufReadExt, BufReader};
 use smol::net::{TcpListener, TcpStream};
+#[cfg(not(target_os = "windows"))]
 use smol::net::unix::UnixStream;
 use smol::Unblock;
 use clap::Parser;
@@ -19,6 +20,7 @@ use shvrpc::client::LoginParams;
 use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{RpcError, RqId, SeqNo};
+#[cfg(not(target_os = "windows"))]
 use shvrpc::serialrw::{SerialFrameReader, SerialFrameWriter};
 use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
 use shvrpc::util::login_from_url;
@@ -183,6 +185,7 @@ async fn login(url: &Url, user_agent: String) -> shvrpc::Result<(BoxedFrameReade
             let frame_writer: BoxedFrameWriter = Box::new(StreamFrameWriter::new(bwr));
             (frame_reader, frame_writer)
         }
+        #[cfg(not(target_os = "windows"))]
         "unix" => {
             let stream = UnixStream::connect(url.path()).await?;
             let (reader, writer) = stream.split();
@@ -192,6 +195,9 @@ async fn login(url: &Url, user_agent: String) -> shvrpc::Result<(BoxedFrameReade
             let frame_writer: BoxedFrameWriter = Box::new(StreamFrameWriter::new(bwr));
             (frame_reader, frame_writer)
         }
+        #[cfg(target_os = "windows")]
+        "unix" => panic!("'unix schema is not supported on Windows'"),
+        #[cfg(not(target_os = "windows"))]
         "unixs" => {
             let stream = UnixStream::connect(url.path()).await?;
             let (reader, writer) = stream.split();
@@ -202,6 +208,8 @@ async fn login(url: &Url, user_agent: String) -> shvrpc::Result<(BoxedFrameReade
             reset_session = true;
             (frame_reader, frame_writer)
         }
+        #[cfg(target_os = "windows")]
+        "unixs" => panic!("'unix schema is not supported on Windows'"),
         #[cfg(feature = "serial")]
         "serial" => {
             let port_name = url.path();
