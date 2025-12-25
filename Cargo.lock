@@ -1392,9 +1392,9 @@ dependencies = [
 
 [[package]]
 name = "shvrpc"
-version = "7.1.5"
+version = "7.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fbb72bcd260ab0db52c05c755d1a9c2b69d2dc4f505b54bb36ac5fc5e1460aa"
+checksum = "1e044c1198308d33f5470afee029a5d078b9746823d9723e31d332799f247c9b"
 dependencies = [
  "anyhow",
  "async-trait",
