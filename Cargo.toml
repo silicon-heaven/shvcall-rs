@@ -3,7 +3,7 @@ name = "shvcall"
 description = "CLI utility to invoke remote SHV RPC calls"
 license = "MIT"
 repository = "https://github.com/silicon-heaven/shvcall-rs"
-version = "3.9.11"
+version = "3.9.12"
 edition = "2024"
 
 [[bin]]
