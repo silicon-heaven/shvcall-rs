@@ -671,15 +671,9 @@ async fn start_tunnel_server(
                                 break;
                             }
                         }
-                        tunnels.retain(|tunnel| tunnel.frame_sender.is_closed());
-                        // {
-                        //     if tunnel.frame_sender.is_closed() {
-                        //         debug!(target: "Tunnel", "Removing closed tunnel state {:?}", tunnel);
-                        //         false
-                        //     } else {
-                        //         true
-                        //     }
-                        // });
+                        tunnels.extract_if(.., |tunnel| tunnel.frame_sender.is_closed()).for_each(|tunnel| {
+                            debug!(target: "Tunnel", "Removing closed tunnel {:?}", tunnel);
+                        });
                     }
                     Err(e) => {
                         error!("Get response receiver error: {e}");
