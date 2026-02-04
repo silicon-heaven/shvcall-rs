@@ -3,7 +3,7 @@ name = "shvcall"
 description = "CLI utility to invoke remote SHV RPC calls"
 license = "MIT"
 repository = "https://github.com/silicon-heaven/shvcall-rs"
-version = "3.9.15"
+version = "3.9.16"
 edition = "2024"
 
 [[bin]]
@@ -26,6 +26,9 @@ rustyline-async = { version = "0.4.1", optional = true }
 crossterm = { version = "0.29", optional = true }
 url = "2.5.8"
 futures-time = "3.0.0"
+futures-rustls = "0.26.0"
+rustls-pemfile = "2.2.0"
+rustls-platform-verifier = "0.6.1"
 async-channel = "2.3.1"
 serialport = { version = "4.7.1", optional = true }
 
