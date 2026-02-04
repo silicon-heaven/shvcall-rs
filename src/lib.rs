@@ -1,8 +1,12 @@
 use std::future::Future;
 use std::io::Stdout;
 use std::pin::pin;
+use std::sync::Arc;
 use futures::future::{pending, select};
+use futures_rustls::pki_types::CertificateDer;
+use futures_rustls::rustls::ClientConfig as TlsClientConfig;
 use futures_time::task::sleep_until;
+use rustls_platform_verifier::BuilderVerifierExt;
 use smol::io::{AsyncBufReadExt, BufReader};
 use smol::net::{TcpListener, TcpStream};
 #[cfg(not(target_os = "windows"))]
@@ -166,6 +170,33 @@ fn is_tty() -> bool {
     #[cfg(not(feature = "readline"))]
     return false;
 }
+
+
+fn load_certs(path: &str) -> std::io::Result<Vec<CertificateDer<'static>>> {
+    rustls_pemfile::certs(&mut std::io::BufReader::new(std::fs::File::open(path)?))
+        .collect::<std::io::Result<Vec<_>>>()
+}
+
+fn build_tls_connector(url: &url::Url) -> shvrpc::Result<futures_rustls::TlsConnector> {
+    let crypto_provider = Arc::new(futures_rustls::rustls::crypto::aws_lc_rs::default_provider());
+    if let Some((_, ca_path)) = url.query_pairs().find(|(k, _)| k == "ca") {
+        let ca_certs = load_certs(&ca_path)?;
+        let mut root_store = futures_rustls::rustls::RootCertStore::empty();
+        root_store.add_parsable_certificates(ca_certs);
+        let client_config = TlsClientConfig::builder_with_provider(crypto_provider)
+            .with_safe_default_protocol_versions()?
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        Ok(futures_rustls::TlsConnector::from(Arc::new(client_config)))
+    } else {
+        let client_config = TlsClientConfig::builder_with_provider(crypto_provider)
+            .with_safe_default_protocol_versions()?
+            .with_platform_verifier()?
+            .with_no_client_auth();
+        Ok(futures_rustls::TlsConnector::from(Arc::new(client_config)))
+    }
+}
+
 async fn login(url: &Url, user_agent: String) -> shvrpc::Result<(BoxedFrameReader, BoxedFrameWriter)> {
     // Establish a connection
     debug!("Connecting to: {url}");
@@ -179,6 +210,25 @@ async fn login(url: &Url, user_agent: String) -> shvrpc::Result<(BoxedFrameReade
             );
             let stream = TcpStream::connect(&address).await?;
             let (reader, writer) = stream.split();
+            let brd = BufReader::new(reader);
+            let bwr = BufWriter::new(writer);
+            let frame_reader: BoxedFrameReader = Box::new(StreamFrameReader::new(brd));
+            let frame_writer: BoxedFrameWriter = Box::new(StreamFrameWriter::new(bwr));
+            (frame_reader, frame_writer)
+        }
+        "ssl" => {
+            let address = format!(
+                "{}:{}",
+                url.host_str().unwrap_or("localhost"),
+                url.port().unwrap_or(3777)
+            );
+            let connector = build_tls_connector(url)?;
+            let server_name = futures_rustls::pki_types::ServerName::try_from(url.host_str().unwrap_or_default())?.to_owned();
+            let tcp_stream = TcpStream::connect(&address).await?;
+            let tls_stream = connector
+                .connect(server_name, tcp_stream)
+                .await?;
+            let (reader, writer) = tls_stream.split();
             let brd = BufReader::new(reader);
             let bwr = BufWriter::new(writer);
             let frame_reader: BoxedFrameReader = Box::new(StreamFrameReader::new(brd));
