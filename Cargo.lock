@@ -342,9 +342,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.56"
+version = "4.5.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a75ca66430e33a14957acc24c5077b503e7d374151b2b4b3a10c83b4ceb4be0e"
+checksum = "6899ea499e3fb9305a65d5ebf6e3d2248c5fab291f300ad0a704fbe142eae31a"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -352,9 +352,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.56"
+version = "4.5.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "793207c7fa6300a0608d1080b858e5fdbe713cdc1c8db9fb17777d8a13e63df0"
+checksum = "7b12c8b680195a62a8364d16b8447b01b6c2c8f9aaf68bee653be34d4245e238"
 dependencies = [
  "anstream",
  "anstyle",
@@ -585,9 +585,9 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "duration-str"
-version = "0.18.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6eb193f176998d2f9fed5cfea52af8237f86a03fe66b85f96ad75d890a85299"
+checksum = "12494809f9915b6132014cc259c4e204ab53ab6c6dd2225672703b5359267d82"
 dependencies = [
  "chrono",
  "rust_decimal",
@@ -651,6 +651,12 @@ name = "find-msvc-tools"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a3076410a55c90011c298b04d0cfa770b00fa04e1e3c97d3f6c9de105a03844"
+
+[[package]]
+name = "fn_name"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "528a0eb35b41b895aef1afed5ab28659084118e730edc72f033e76fb71666dbb"
 
 [[package]]
 name = "form_urlencoded"
@@ -1666,12 +1672,13 @@ dependencies = [
 
 [[package]]
 name = "shvproto"
-version = "3.6.28"
+version = "6.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d61f512657d31bd316132c93bbab4c99fe87f3743dc21848bbe1e87d8cfada2c"
+checksum = "4266e60864f8aee34eecdb2ff54b6007e3d2a38c70d237c3489c9877a259df60"
 dependencies = [
  "chrono",
  "clap",
+ "fn_name",
  "hex",
  "libshvproto-macros",
  "log",
@@ -1679,12 +1686,13 @@ dependencies = [
 
 [[package]]
 name = "shvrpc"
-version = "9.0.0"
+version = "11.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd261c9a4e05a4796aceb7f592bf849ada6b1db8094e23ae87c60a1b3781b355"
+checksum = "ed610a07fe8c869230e4e258b8a9fa2546a6589670a2569f3df7580683236361"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bitflags 2.10.0",
  "crc",
  "duration-str",
  "futures",
