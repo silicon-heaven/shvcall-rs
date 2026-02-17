@@ -84,6 +84,10 @@ pub struct Opts {
     #[arg(short = 'L', long)]
     pub tunnel: Option<String>,
 
+    /// Path to the broker's .app/tunnel where the tunnel should be created.
+    #[arg(long)]
+    pub tunnel_path: Option<String>,
+
     /// Send N request in M threads, format is N[,M], default M == 1
     #[arg(long)]
     pub burst: Option<String>,
@@ -658,6 +662,12 @@ async fn start_tunnel_server(
     mut broker_frame_writer: BoxedFrameWriter,
     opts: &Opts,
 ) -> Result {
+    if opts.tunnel_path.is_none() {
+        warn!("Using default .app/tunnel endpoint. This is usually not what you want. Set tunnel path to the broker you want to create a tunnel to.");
+    }
+
+    let tunnel_path = opts.tunnel_path.as_deref().unwrap_or(".app/tunnel").to_owned();
+
     let tunnel_str = opts.tunnel.as_ref().unwrap().as_str();
     let tunnel: Vec<_> = split_quoted(tunnel_str);
     let tunnel = &tunnel[..];
@@ -704,8 +714,9 @@ async fn start_tunnel_server(
                     let read_frame_receiver = read_frame_receiver.clone();
                     let write_frame_sender = write_frame_sender.clone();
                     let remote_host_port = remote_host_port.clone();
+                    let tunnel_path = tunnel_path.clone();
                     spawn_and_log_error(async move {
-                        handle_tunnel_socket(stream, remote_host_port, create_rqid, write_rqid, read_frame_receiver, write_frame_sender.clone()).await.map_err(|e | e.to_string())
+                        handle_tunnel_socket(stream, remote_host_port, tunnel_path, create_rqid, write_rqid, read_frame_receiver, write_frame_sender.clone()).await.map_err(|e | e.to_string())
                     });
                 } else {
                     break;
@@ -747,11 +758,11 @@ async fn start_tunnel_server(
     Ok(())
 }
 
-async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, create_rqid: RqId, write_rqid: RqId, read_frame_receiver: Receiver<RpcFrame>, mut write_frame_sender: Sender<RpcFrame>) -> Result {
+async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, tunnel_path: String, create_rqid: RqId, write_rqid: RqId, read_frame_receiver: Receiver<RpcFrame>, mut write_frame_sender: Sender<RpcFrame>) -> Result {
     let tunid = {
         debug!(target: "Tunnel", "Creating tunnel");
         let tun_opts = Map::from([("host".into(), (remote_host_port).into())]);
-        let mut rq = RpcMessage::new_request(".app/tunnel", "create", Some(tun_opts.into()));
+        let mut rq = RpcMessage::new_request(&tunnel_path, "create", Some(tun_opts.into()));
         rq.set_request_id(create_rqid);
         write_frame_sender.send(rq.to_frame()?).await?;
         loop {
@@ -776,7 +787,7 @@ async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, creat
     let mut expected_read_seqno = 0;
     let mut seqno_to_write = 0;
     {
-        let mut rq = RpcMessage::new_request(&format!(".app/tunnel/{tunid}"), "write", None);
+        let mut rq = RpcMessage::new_request(&format!("{tunnel_path}/{tunid}"), "write", None);
         rq.set_request_id(write_rqid);
         rq.set_seqno(seqno_to_write);
         seqno_to_write += 1;
@@ -794,7 +805,7 @@ async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, creat
                     break;
                 }
                 let data = &sock_read_buff[0 .. n];
-                seqno_to_write = process_socket_to_broker_data(tunid, seqno_to_write, write_rqid, data, &mut write_frame_sender).await?;
+                seqno_to_write = process_socket_to_broker_data(&tunnel_path, tunid, seqno_to_write, write_rqid, data, &mut write_frame_sender).await?;
             }
             frame = read_frame_receiver.recv().fuse() => {
                 match frame {
@@ -839,8 +850,8 @@ async fn process_broker_to_socket_frame(rqid: RqId, expected_seqno: SeqNo, frame
     warn!("Seqno not received, ignoring data.");
     Ok(expected_seqno)
 }
-async fn process_socket_to_broker_data(tunid: u64, seqno_to_write: SeqNo, write_rqid: RqId, data: &[u8], frame_writer: &mut Sender<RpcFrame>) -> shvrpc::Result<SeqNo> {
-    let mut rq = RpcMessage::new_request(&format!(".app/tunnel/{tunid}"), "write", Some(RpcValue::from(data)));
+async fn process_socket_to_broker_data(tunnel_path: &str, tunid: u64, seqno_to_write: SeqNo, write_rqid: RqId, data: &[u8], frame_writer: &mut Sender<RpcFrame>) -> shvrpc::Result<SeqNo> {
+    let mut rq = RpcMessage::new_request(&format!("{tunnel_path}/{tunid}"), "write", Some(RpcValue::from(data)));
     rq.set_request_id(write_rqid);
     rq.set_seqno(seqno_to_write);
     frame_writer.send(rq.to_frame()?).await?;
