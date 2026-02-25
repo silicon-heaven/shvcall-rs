@@ -20,14 +20,14 @@ use futures::{FutureExt, StreamExt};
 use futures_time::future::FutureExt as ff;
 use futures_time::time::{Duration, Instant};
 use log::*;
-use shvrpc::client::LoginParams;
+use shvrpc::client::{LoginParams, LoginType};
 use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{RpcError, RqId, SeqNo};
 #[cfg(not(target_os = "windows"))]
 use shvrpc::serialrw::{SerialFrameReader, SerialFrameWriter};
 use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
-use shvrpc::util::login_from_url;
+use shvrpc::util::{LoginQueryParams, parse_query_params};
 use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
 use url::Url;
 use async_channel::{Sender, Receiver};
@@ -279,13 +279,20 @@ async fn login(url: &Url, user_agent: String) -> shvrpc::Result<(BoxedFrameReade
     };
 
     // login
-    let (user, password) = login_from_url(url);
-    let login_params = LoginParams {
+    let LoginQueryParams {user, password, token, session } = parse_query_params(url);
+    let mut login_params = LoginParams {
         user,
         password,
+        token,
         user_agent,
+        session,
         ..Default::default()
     };
+
+    if !login_params.token.is_empty() {
+        login_params.login_type = LoginType::Token;
+    }
+
     //let frame = frame_reader.receive_frame().await?;
     //frame_writer.send_frame(frame.expect("frame")).await?;
     client::login(&mut *frame_reader, &mut *frame_writer, &login_params, reset_session).await?;
