@@ -3,7 +3,7 @@ name = "shvcall"
 description = "CLI utility to invoke remote SHV RPC calls"
 license = "MIT"
 repository = "https://github.com/silicon-heaven/shvcall-rs"
-version = "3.11.1"
+version = "3.11.2"
 edition = "2024"
 
 [[bin]]
@@ -15,7 +15,7 @@ serial = ["dep:serialport"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-shvproto = "6.0.2"
+shvproto = "6.1.1"
 shvrpc = "14.0.0"
 futures = "0.3.32"
 smol = "2"
