@@ -1673,9 +1673,9 @@ dependencies = [
 
 [[package]]
 name = "shvproto"
-version = "6.1.4"
+version = "6.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c08d5cd288caec2b4b5de89920612c788f2fb505f85eda53b38ba1b29ad635a9"
+checksum = "575f2dcee5e5aaf5f075988f8ae33593707cefca3c02a98ea8776839da45097b"
 dependencies = [
  "chrono",
  "clap",
@@ -1687,9 +1687,9 @@ dependencies = [
 
 [[package]]
 name = "shvrpc"
-version = "14.0.3"
+version = "15.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f53511b257ad5809eb71fea5af256bc42302086e6c2b343b3f9e8eb03a7ebd5"
+checksum = "b0b06ae0fe2d10b7ee23790b613fdca98af17d7a3f479abb8a7a39c27d01951b"
 dependencies = [
  "anyhow",
  "async-trait",
