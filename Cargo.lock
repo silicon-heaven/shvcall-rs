@@ -336,9 +336,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.6.0"
+version = "4.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b193af5b67834b676abd72466a96c1024e6a6ad978a1f484bd90b85c94041351"
+checksum = "1ddb117e43bbf7dacf0a4190fef4d345b9bad68dfc649cb349e7d17d28428e51"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -358,9 +358,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.6.0"
+version = "4.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1110bd8a634a1ab8cb04345d8d878267d57c3cf1b38d91b71af6686408bbca6a"
+checksum = "f2ce8604710f6733aa641a2b3731eaa1e8b3d9973d5e3565da11800813f997a9"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -779,9 +779,9 @@ checksum = "037711b3d59c33004d3856fbdc83b99d4ff37a24768fa1be9ce3538a1cde4393"
 
 [[package]]
 name = "futures-time"
-version = "3.0.1"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17f4f4272ec2be25287f1e184066c249b1f6b6d4d982d7c2f56f424096ae64e2"
+checksum = "24076708e74fbd55fb36079acbba19988175140026cc67a878b91b0c3751220b"
 dependencies = [
  "async-channel 1.9.0",
  "async-io",
@@ -1699,9 +1699,9 @@ dependencies = [
 
 [[package]]
 name = "shvproto"
-version = "6.1.5"
+version = "6.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "575f2dcee5e5aaf5f075988f8ae33593707cefca3c02a98ea8776839da45097b"
+checksum = "4ac04d11293ff69b112c75c987f1c819f0989ff3a1367780ea36523e5a1f533f"
 dependencies = [
  "chrono",
  "clap",
@@ -1713,9 +1713,9 @@ dependencies = [
 
 [[package]]
 name = "shvrpc"
-version = "15.0.3"
+version = "15.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0ac12dae75e2ee1b7e56f338d7f6e2ee88aa069a46b18c81cc5782a269cf6a0"
+checksum = "43656781f680b8c356551a6ef1de0c63581a37c4792036a2434e564f179200b8"
 dependencies = [
  "anyhow",
  "async-trait",
