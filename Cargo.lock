@@ -1677,7 +1677,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shvcall"
-version = "3.11.17"
+version = "3.11.18"
 dependencies = [
  "async-channel 2.5.0",
  "clap",
@@ -1713,9 +1713,9 @@ dependencies = [
 
 [[package]]
 name = "shvrpc"
-version = "15.0.4"
+version = "16.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43656781f680b8c356551a6ef1de0c63581a37c4792036a2434e564f179200b8"
+checksum = "244f1e1ee71e9bc8cc6ae5a9a13fcdc6da02868a1982c90a71de603cad2ea60b"
 dependencies = [
  "anyhow",
  "async-trait",
