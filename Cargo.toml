@@ -15,8 +15,8 @@ serial = ["dep:serialport"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-shvproto = "6.1.9"
-shvrpc = "16.0.0"
+shvproto = "6.1.10"
+shvrpc = "16.1.0"
 futures = "0.3.32"
 smol = "2"
 log = "0.4.30"
