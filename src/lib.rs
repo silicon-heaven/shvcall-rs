@@ -794,9 +794,6 @@ async fn start_tunnel_server(
                                 break;
                             }
                         }
-                        tunnels.extract_if(.., |tunnel| tunnel.frame_sender.is_closed()).for_each(|tunnel| {
-                            debug!(target: "Tunnel", "Removing closed tunnel {:?}", tunnel);
-                        });
                      }
                     Err(e) => {
                         error!("Get response receiver error: {e}");
@@ -961,10 +958,15 @@ async fn process_socket_to_broker_data(tunnel_path: &str, tunid: u64, seqno_to_w
 pub async fn try_main(opts: Opts) -> Result {
     let (shutdown_sender, shutdown_receiver) = async_channel::bounded::<()>(1);
     smol::spawn(async move {
-        let mut signals = match async_signal::Signals::new([
+        #[cfg(windows)]
+        let signal_list = [async_signal::Signal::Int];
+        #[cfg(not(windows))]
+        let signal_list = [
             async_signal::Signal::Term,
             async_signal::Signal::Int,
-        ]) {
+        ];
+
+        let mut signals = match async_signal::Signals::new(signal_list) {
             Ok(signals) => signals,
             Err(err) => {
                 error!("Failed to initialize signal handling: {err}");
