@@ -584,7 +584,7 @@ fn timeout_param_to_duration(timeout_ms: u64) -> Option<Duration> {
     }
 }
 
-async fn make_burst_call(opts: &Opts) -> Result {
+async fn make_burst_call(opts: &Opts, shutdown_receiver: Receiver<()>) -> Result {
     if opts.method.is_none() {
         return Err("--method parameter missing".into());
     }
@@ -610,11 +610,16 @@ async fn make_burst_call(opts: &Opts) -> Result {
         taskno: i32,
         count: i32,
         timeout: Option<Duration>,
-        user_agent: String
+        user_agent: String,
+        shutdown_receiver: Receiver<()>,
     ) {
         println!("Starting burst task #{taskno}, {count} calls of {path}:{method}");
         let (mut frame_reader, mut frame_writer) = login(&url, user_agent).await.unwrap();
         for _ in 0..count {
+            if shutdown_receiver.is_closed() {
+                info!(target: "Burst", "Shutdown requested, stopping burst task #{taskno}");
+                return;
+            }
             let rqid = frame_writer
                 .send_request(&path, &method, param.clone())
                 .await
@@ -635,7 +640,8 @@ async fn make_burst_call(opts: &Opts) -> Result {
                 taskno + 1,
                 nmsg,
                 timeout_param_to_duration(opts.timeout),
-                opts.extract_user_agent()
+                opts.extract_user_agent(),
+                shutdown_receiver.clone(),
             ))
         })
         .collect::<FuturesUnordered<_>>()
@@ -660,14 +666,52 @@ fn split_quoted(s: &str) -> Vec<&str> {
 }
 #[derive(Debug)]
 struct Tunnel {
+    tunid: Option<u64>,
     create_rqid: RqId,
     write_rqid: RqId,
+    close_rqid: Option<RqId>,
     frame_sender: Sender<RpcFrame>,
 }
+
+fn tunnel_close_frame(tunnel_path: &str, tunid: u64) -> shvrpc::Result<(RqId, RpcFrame)> {
+    let mut rq = RpcMessage::new_request(format!("{tunnel_path}/{tunid}"), "close");
+    let rqid = RpcMessage::next_request_id();
+    rq.set_request_id(rqid);
+    Ok((rqid, rq.to_frame()?))
+}
+
+async fn send_tunnel_close(tunnel_path: &str, tunid: u64, broker_frame_writer: &mut BoxedFrameWriter) -> Option<RqId> {
+    if let Ok((rqid, frame)) = tunnel_close_frame(tunnel_path, tunid) && broker_frame_writer.send_frame(frame).await.is_ok() {
+        return Some(rqid);
+    }
+    None
+}
+
+fn extract_tunid(frame: &RpcFrame) -> Option<u64> {
+    let rpcmsg = frame.to_rpcmesage().ok()?;
+    let resp = rpcmsg.response().ok()?;
+    resp.success()?.as_str().parse::<u64>().ok()
+}
+
+async fn handle_client_connection_closed_event(
+    tunnels: &mut Vec<Tunnel>,
+    tunnel_path: &str,
+    tunid: u64,
+    broker_frame_writer: &mut BoxedFrameWriter,
+) {
+    if let Some(tunnel) = tunnels.iter_mut().find(|tunnel| tunnel.tunid == Some(tunid)) {
+        tunnel.close_rqid = send_tunnel_close(tunnel_path, tunid, broker_frame_writer).await;
+        if tunnel.close_rqid.is_none() {
+            tunnels.extract_if(.., |candidate| candidate.tunid == Some(tunid)).for_each(drop);
+        }
+    }
+}
+
 async fn start_tunnel_server(
     mut broker_frame_reader: BoxedFrameReader,
     mut broker_frame_writer: BoxedFrameWriter,
     opts: &Opts,
+    shutdown_receiver: Receiver<()>,
 ) -> Result {
     if opts.tunnel_path.is_none() {
         warn!("Using default .app/tunnel endpoint. This is usually not what you want. Set tunnel path to the broker you want to create a tunnel to.");
@@ -706,8 +750,11 @@ async fn start_tunnel_server(
     let listener = TcpListener::bind(format!("{local_host}:{local_port}")).await?;
     let mut incoming = listener.incoming();
 
+    let (tunnel_event_sender, tunnel_event_receiver) = async_channel::unbounded::<u64>();
     let (write_frame_sender, write_frame_receiver) = async_channel::unbounded();
+
     loop {
+        tunnels.extract_if(.., |tunnel| tunnel.tunid.is_none() && tunnel.frame_sender.is_closed()).for_each(drop);
         select! {
             stream = incoming.next().fuse() => {
                 if let Some(stream) = stream {
@@ -716,15 +763,16 @@ async fn start_tunnel_server(
                     let create_rqid = RpcMessage::next_request_id();
                     let write_rqid = RpcMessage::next_request_id();
                     let (read_frame_sender, read_frame_receiver) = async_channel::unbounded();
-                    let tunnel = Tunnel {create_rqid, write_rqid, frame_sender: read_frame_sender};
+                    let tunnel = Tunnel {tunid: None, create_rqid, write_rqid, close_rqid: None, frame_sender: read_frame_sender};
                     tunnels.push(tunnel);
                     let read_frame_receiver = read_frame_receiver.clone();
                     let write_frame_sender = write_frame_sender.clone();
                     let remote_host_port = remote_host_port.clone();
                     let tunnel_path = tunnel_path.clone();
-                    spawn_and_log_error(async move {
-                        handle_tunnel_socket(stream, remote_host_port, tunnel_path, create_rqid, write_rqid, read_frame_receiver, write_frame_sender.clone()).await.map_err(|e | e.to_string())
-                    });
+                    let tunnel_event_sender = tunnel_event_sender.clone();
+					spawn_and_log_error(async move {
+					    handle_tunnel_socket(stream, remote_host_port, tunnel_path, create_rqid, write_rqid, read_frame_receiver, write_frame_sender.clone(), tunnel_event_sender.clone()).await.map_err(|e| e.to_string())
+					});
                 } else {
                     break;
                 }
@@ -733,8 +781,15 @@ async fn start_tunnel_server(
                 match frame {
                     Ok(frame) => {
                         let rqid = frame.request_id().unwrap_or(0);
-                        for tunnel in &tunnels {
+                        if tunnels.iter().any(|tunnel| tunnel.close_rqid == Some(rqid)) {
+                            tunnels.extract_if(.., |tunnel| tunnel.close_rqid == Some(rqid)).for_each(drop);
+                            continue;
+                        }
+                        for tunnel in &mut tunnels {
                             if tunnel.write_rqid == rqid || tunnel.create_rqid == rqid {
+                                if tunnel.create_rqid == rqid {
+                                    tunnel.tunid = extract_tunid(&frame);
+                                }
                                 tunnel.frame_sender.send(frame).await?;
                                 break;
                             }
@@ -742,7 +797,7 @@ async fn start_tunnel_server(
                         tunnels.extract_if(.., |tunnel| tunnel.frame_sender.is_closed()).for_each(|tunnel| {
                             debug!(target: "Tunnel", "Removing closed tunnel {:?}", tunnel);
                         });
-                    }
+                     }
                     Err(e) => {
                         error!("Get response receiver error: {e}");
                         break;
@@ -760,12 +815,49 @@ async fn start_tunnel_server(
                     }
                 }
             }
+            event = tunnel_event_receiver.recv().fuse() => {
+                if let Ok(tunid) = event {
+                    handle_client_connection_closed_event(&mut tunnels, &tunnel_path, tunid, &mut broker_frame_writer).await;
+                }
+            }
+            _shutdown = shutdown_receiver.recv().fuse() => {
+                info!(target: "Tunnel", "Received shutdown signal, shutting down TCP tunnel server");
+                break;
+            }
+        }
+    }
+
+    for tunnel in &mut tunnels {
+        if tunnel.close_rqid.is_none() && let Some(tunid) = tunnel.tunid {
+            tunnel.close_rqid = send_tunnel_close(&tunnel_path, tunid, &mut broker_frame_writer).await;
+        }
+    }
+    tunnels.extract_if(.., |tunnel| tunnel.close_rqid.is_none()).for_each(drop);
+
+    let shutdown_deadline = Instant::now() + Duration::from_secs(2);
+    while !tunnels.is_empty() {
+        let timeout_fut = sleep_until(shutdown_deadline).fuse();
+        futures::pin_mut!(timeout_fut);
+        select! {
+            frame = broker_frame_reader.receive_frame().fuse() => {
+                if let Ok(frame) = frame && let Some(rqid) = frame.request_id() {
+                    tunnels.extract_if(.., |tunnel| tunnel.close_rqid == Some(rqid)).for_each(drop);
+                } else {
+                    break;
+                }
+            }
+            _ = timeout_fut => {
+                info!(target: "Tunnel", "Shutdown deadline reached, finishing tunnel loop");
+                break;
+            }
         }
     }
     Ok(())
 }
 
-async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, tunnel_path: String, create_rqid: RqId, write_rqid: RqId, read_frame_receiver: Receiver<RpcFrame>, mut write_frame_sender: Sender<RpcFrame>) -> Result {
+#[allow(clippy::too_many_arguments)]
+async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, tunnel_path: String, create_rqid: RqId, write_rqid: RqId, read_frame_receiver: Receiver<RpcFrame>, mut write_frame_sender: Sender<RpcFrame>, tunnel_event_sender: Sender<u64>) -> Result {
+
     let tunid = {
         debug!(target: "Tunnel", "Creating tunnel");
         let tun_opts = Map::from([("host".into(), (remote_host_port).into())]);
@@ -809,6 +901,7 @@ async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, tunne
                 let n = n?;
                 if n == 0 {
                     debug!(target: "Tunnel", "Tunnel client socket closed");
+                    let _ = tunnel_event_sender.send(tunid).await;
                     break;
                 }
                 let data = &sock_read_buff[0 .. n];
@@ -866,12 +959,30 @@ async fn process_socket_to_broker_data(tunnel_path: &str, tunid: u64, seqno_to_w
 }
 
 pub async fn try_main(opts: Opts) -> Result {
+    let (shutdown_sender, shutdown_receiver) = async_channel::bounded::<()>(1);
+    smol::spawn(async move {
+        let mut signals = match async_signal::Signals::new([
+            async_signal::Signal::Term,
+            async_signal::Signal::Int,
+        ]) {
+            Ok(signals) => signals,
+            Err(err) => {
+                error!("Failed to initialize signal handling: {err}");
+                return;
+            }
+        };
+
+        if signals.next().await.is_some() {
+            shutdown_sender.close();
+        }
+    }).detach();
+
     if opts.burst.is_some() {
-        return make_burst_call(&opts).await;
+        return make_burst_call(&opts, shutdown_receiver).await;
     }
     let (frame_reader, frame_writer) = login(&opts.url, opts.extract_user_agent()).await?;
     let res = if opts.tunnel.is_some() {
-        start_tunnel_server(frame_reader, frame_writer, &opts).await
+        start_tunnel_server(frame_reader, frame_writer, &opts, shutdown_receiver).await
     } else {
         make_call(frame_reader, frame_writer, &opts).await
     };
