@@ -702,7 +702,7 @@ async fn handle_client_connection_closed_event(
     if let Some(tunnel) = tunnels.iter_mut().find(|tunnel| tunnel.tunid == Some(tunid)) {
         tunnel.close_rqid = send_tunnel_close(tunnel_path, tunid, broker_frame_writer).await;
         if tunnel.close_rqid.is_none() {
-            tunnels.extract_if(.., |candidate| candidate.tunid == Some(tunid)).for_each(drop);
+            tunnels.retain(|tunnel| tunnel.tunid != Some(tunid));
         }
     }
 }
@@ -754,7 +754,7 @@ async fn start_tunnel_server(
     let (write_frame_sender, write_frame_receiver) = async_channel::unbounded();
 
     loop {
-        tunnels.extract_if(.., |tunnel| tunnel.tunid.is_none() && tunnel.frame_sender.is_closed()).for_each(drop);
+        tunnels.retain(|tunnel| { tunnel.tunid.is_some() || !tunnel.frame_sender.is_closed() });
         select! {
             stream = incoming.next().fuse() => {
                 if let Some(stream) = stream {
@@ -782,7 +782,7 @@ async fn start_tunnel_server(
                     Ok(frame) => {
                         let rqid = frame.request_id().unwrap_or(0);
                         if tunnels.iter().any(|tunnel| tunnel.close_rqid == Some(rqid)) {
-                            tunnels.extract_if(.., |tunnel| tunnel.close_rqid == Some(rqid)).for_each(drop);
+                            tunnels.retain(|tunnel| tunnel.close_rqid != Some(rqid));
                             continue;
                         }
                         for tunnel in &mut tunnels {
@@ -829,7 +829,7 @@ async fn start_tunnel_server(
             tunnel.close_rqid = send_tunnel_close(&tunnel_path, tunid, &mut broker_frame_writer).await;
         }
     }
-    tunnels.extract_if(.., |tunnel| tunnel.close_rqid.is_none()).for_each(drop);
+    tunnels.retain(|tunnel| tunnel.close_rqid.is_some());
 
     let shutdown_deadline = Instant::now() + Duration::from_secs(2);
     while !tunnels.is_empty() {
@@ -838,7 +838,7 @@ async fn start_tunnel_server(
         select! {
             frame = broker_frame_reader.receive_frame().fuse() => {
                 if let Ok(frame) = frame && let Some(rqid) = frame.request_id() {
-                    tunnels.extract_if(.., |tunnel| tunnel.close_rqid == Some(rqid)).for_each(drop);
+                    tunnels.retain(|tunnel| tunnel.close_rqid != Some(rqid));
                 } else {
                     break;
                 }
