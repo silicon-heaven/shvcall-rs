@@ -614,17 +614,28 @@ async fn make_burst_call(opts: &Opts, shutdown_receiver: Receiver<()>) -> Result
         shutdown_receiver: Receiver<()>,
     ) {
         println!("Starting burst task #{taskno}, {count} calls of {path}:{method}");
-        let (mut frame_reader, mut frame_writer) = login(&url, user_agent).await.unwrap();
+        let (mut frame_reader, mut frame_writer) = match login(&url, user_agent).await {
+            Ok((frame_reader, frame_writer)) => (frame_reader, frame_writer),
+            Err(err) => {
+                error!(target: "Burst", "Burst task failed to connect: {err}");
+                return;
+            }
+        };
         for _ in 0..count {
             if shutdown_receiver.is_closed() {
                 info!(target: "Burst", "Shutdown requested, stopping burst task #{taskno}");
                 return;
             }
-            let rqid = frame_writer
-                .send_request(&path, &method, param.clone())
-                .await
-                .unwrap();
-            receive_response(&mut frame_reader, rqid, timeout).await.unwrap();
+            let rqid = match frame_writer.send_request(&path, &method, param.clone()).await {
+                Ok(rqid) => rqid,
+                Err(err) => {
+                    error!(target: "Burst", "Burst task failed to send a request: {err}");
+                    return;
+                },
+            };
+            if let Err(err) = receive_response(&mut frame_reader, rqid, timeout).await {
+                error!(target: "Burst", "Burst task failed to send receive a response: {err}");
+            }
         }
         println!("Burst task #{taskno} finished, after {count} calls made successfully.");
     }
