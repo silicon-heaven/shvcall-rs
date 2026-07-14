@@ -411,7 +411,7 @@ async fn make_call(
             #[cfg(feature = "readline")]
             {
                 let (mut rl, mut rl_stdout) =
-                    rustyline_async::Readline::new("> ".to_owned()).unwrap();
+                    rustyline_async::Readline::new("> ".to_owned()).expect("Readline must work");
                 rl.set_max_history(1000);
                 loop {
                     match rl.readline().await {
@@ -507,7 +507,7 @@ async fn make_call(
             }
         }
     } else {
-        let method = opts.method.clone().unwrap();
+        let method = opts.method.clone().expect("Method must be present");
         let (path, method) = if let Some(ix) = method.find(':') {
             (method[0..ix].to_owned(), method[ix + 1..].to_owned())
         } else {
@@ -588,16 +588,16 @@ async fn make_burst_call(opts: &Opts, shutdown_receiver: Receiver<()>) -> Result
     if opts.method.is_none() {
         return Err("--method parameter missing".into());
     }
-    let burst = opts.burst.clone().unwrap();
+    let burst = opts.burst.clone().expect("Burst must be present");
     let (nmsg, ntask) = {
         let mut s = burst.split(',');
-        let nmsg = s.next().unwrap();
-        let nmsg = nmsg.parse::<i32>().unwrap();
+        let nmsg = s.next().expect("Burst param must be in the correct format");
+        let nmsg = nmsg.parse::<i32>().expect("Burst param must be in the correct format");
         let ntask = s.next().unwrap_or("1");
-        let ntask = ntask.parse::<i32>().unwrap();
+        let ntask = ntask.parse::<i32>().expect("Burst param must be in the correct format");
         (nmsg, ntask)
     };
-    let method = opts.method.clone().unwrap();
+    let method = opts.method.clone().expect("Method must be present");
     let ri = ShvRI::try_from(method)?;
     let param = opts.extract_param()?;
 
@@ -730,7 +730,7 @@ async fn start_tunnel_server(
 
     let tunnel_path = opts.tunnel_path.as_deref().unwrap_or(".app/tunnel").to_owned();
 
-    let tunnel_str = opts.tunnel.as_ref().unwrap().as_str();
+    let tunnel_str = opts.tunnel.as_ref().expect("Tunnel must be present").as_str();
     let tunnel: Vec<_> = split_quoted(tunnel_str);
     let tunnel = &tunnel[..];
     if tunnel.len() < 3 || tunnel.len() > 4 {

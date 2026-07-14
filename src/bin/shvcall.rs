@@ -28,7 +28,7 @@ fn main() -> Result {
             }
         }
     }
-    logger.init().unwrap();
+    logger.init().expect("Logger must work");
 
     debug!("=====================================================");
     debug!("{app_name} ver. {app_version}");
