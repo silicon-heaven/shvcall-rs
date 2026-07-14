@@ -849,7 +849,7 @@ async fn start_tunnel_server(
 }
 
 #[expect(clippy::too_many_arguments, reason = "Whatevs")]
-async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, tunnel_path: String, create_rqid: RqId, write_rqid: RqId, read_frame_receiver: Receiver<RpcFrame>, mut write_frame_sender: Sender<RpcFrame>, tunnel_event_sender: Sender<u64>) -> Result {
+async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, tunnel_path: String, create_rqid: RqId, write_rqid: RqId, read_frame_receiver: Receiver<RpcFrame>, write_frame_sender: Sender<RpcFrame>, tunnel_event_sender: Sender<u64>) -> Result {
 
     let tunid = {
         debug!(target: "Tunnel", "Creating tunnel");
@@ -894,11 +894,11 @@ async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, tunne
                 let n = n?;
                 if n == 0 {
                     debug!(target: "Tunnel", "Tunnel client socket closed");
-                    let _ = tunnel_event_sender.send(tunid).await;
+                    tunnel_event_sender.send(tunid).await.inspect_err(|err| eprintln!("Failed to send tunnel event: {err}")).ok();
                     break;
                 }
                 let data = sock_read_buff.get(0 .. n).expect("We expect read to return the correct value.");
-                seqno_to_write = process_socket_to_broker_data(&tunnel_path, tunid, seqno_to_write, write_rqid, data, &mut write_frame_sender).await?;
+                seqno_to_write = process_socket_to_broker_data(&tunnel_path, tunid, seqno_to_write, write_rqid, data, &write_frame_sender).await?;
             }
             frame = read_frame_receiver.recv().fuse() => {
                 match frame {
@@ -943,7 +943,7 @@ async fn process_broker_to_socket_frame(rqid: RqId, expected_seqno: SeqNo, frame
     warn!("Seqno not received, ignoring data.");
     Ok(expected_seqno)
 }
-async fn process_socket_to_broker_data(tunnel_path: &str, tunid: u64, seqno_to_write: SeqNo, write_rqid: RqId, data: &[u8], frame_writer: &mut Sender<RpcFrame>) -> shvrpc::Result<SeqNo> {
+async fn process_socket_to_broker_data(tunnel_path: &str, tunid: u64, seqno_to_write: SeqNo, write_rqid: RqId, data: &[u8], frame_writer: &Sender<RpcFrame>) -> shvrpc::Result<SeqNo> {
     let mut rq = RpcMessage::new_request(format!("{tunnel_path}/{tunid}"), "write").with_param(data);
     rq.set_request_id(write_rqid);
     rq.set_seqno(seqno_to_write);
