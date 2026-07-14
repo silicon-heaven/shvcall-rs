@@ -130,7 +130,7 @@ impl Opts {
     fn extract_user_agent(&self) -> String {
         let app_name = env!("CARGO_PKG_NAME");
         let app_version = env!("CARGO_PKG_VERSION");
-        self.user_agent.clone().unwrap_or(format!("{app_name} {app_version}"))
+        self.user_agent.clone().unwrap_or_else(|| format!("{app_name} {app_version}"))
     }
 }
 
@@ -402,10 +402,10 @@ async fn make_call(
             };
             let param_ix = line.find(' ');
             let path = line.get(..method_ix).expect("Found via find()").trim();
-            let (method, param) = match param_ix {
-                None => (line.get(method_ix + 1..).expect("We check the bounds").trim(), ""),
-                Some(ix) => (line.get(method_ix + 1..ix).expect("We check the bounds").trim(), line.get(ix + 1..).expect("We check the bounds").trim()),
-            };
+            let (method, param) = param_ix.map_or_else(
+                || (line.get(method_ix + 1..).expect("We check the bounds").trim(), ""),
+                |ix| (line.get(method_ix + 1..ix).expect("We check the bounds").trim(), line.get(ix + 1..).expect("We check the bounds").trim())
+            );
             Ok((path, method, param))
         }
         if is_tty() {
