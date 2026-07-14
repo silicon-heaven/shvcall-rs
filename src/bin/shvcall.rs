@@ -1,3 +1,4 @@
+#![expect(clippy::print_stdout, reason = "Probably should be removed at some point, if this is meant to be a library, but rn, it's just a binary.")]
 use clap::Parser;
 use log::{debug, LevelFilter};
 use shvrpc::util::parse_log_verbosity;

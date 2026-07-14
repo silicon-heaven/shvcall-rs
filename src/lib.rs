@@ -1,3 +1,4 @@
+#![expect(clippy::print_stdout, clippy::print_stderr, reason = "Probably should be removed at some point, if this is meant to be a library, but rn, it's just a binary.")]
 use std::future::Future;
 use std::io::Stdout;
 use std::pin::pin;
