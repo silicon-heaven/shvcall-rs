@@ -401,10 +401,10 @@ async fn make_call(
                 Some(ix) => ix,
             };
             let param_ix = line.find(' ');
-            let path = line[..method_ix].trim();
+            let path = line.get(..method_ix).expect("Found via find()").trim();
             let (method, param) = match param_ix {
-                None => (line[method_ix + 1..].trim(), ""),
-                Some(ix) => (line[method_ix + 1..ix].trim(), line[ix + 1..].trim()),
+                None => (line.get(method_ix + 1..).expect("We check the bounds").trim(), ""),
+                Some(ix) => (line.get(method_ix + 1..ix).expect("We check the bounds").trim(), line.get(ix + 1..).expect("We check the bounds").trim()),
             };
             Ok((path, method, param))
         }
@@ -509,13 +509,11 @@ async fn make_call(
         }
     } else {
         let method = opts.method.clone().expect("Method must be present");
-        let (path, method) = if let Some(ix) = method.find(':') {
-            (method[0..ix].to_owned(), method[ix + 1..].to_owned())
-        } else {
+        let Some((path, method)) = method.split_once(':') else {
             return Err("--method parameter must be in form shv/path:method".into());
         };
         let param = opts.extract_param()?;
-        let rqid = frame_writer.send_request_user_id(&path, &method, param, opts.user_id.as_deref()).await?;
+        let rqid = frame_writer.send_request_user_id(path, method, param, opts.user_id.as_deref()).await?;
         let res = receive_response(
             &mut frame_reader,
             rqid,
@@ -913,7 +911,7 @@ async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, tunne
                     let _ = tunnel_event_sender.send(tunid).await;
                     break;
                 }
-                let data = &sock_read_buff[0 .. n];
+                let data = sock_read_buff.get(0 .. n).expect("We expect read to return the correct value.");
                 seqno_to_write = process_socket_to_broker_data(&tunnel_path, tunid, seqno_to_write, write_rqid, data, &mut write_frame_sender).await?;
             }
             frame = read_frame_receiver.recv().fuse() => {
