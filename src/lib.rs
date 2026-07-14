@@ -732,24 +732,14 @@ async fn start_tunnel_server(
     let tunnel_str = opts.tunnel.as_ref().expect("Tunnel must be present").as_str();
     let tunnel: Vec<_> = split_quoted(tunnel_str);
     let tunnel = &tunnel[..];
-    if tunnel.len() < 3 || tunnel.len() > 4 {
+    let &[mut local_host, local_port, remote_host, remote_port] = tunnel else {
         return Err(format!("Invalid tunnel specification: {tunnel_str}").into());
-    }
-    let (local_host, tunnel) = if tunnel.len() == 4 {
-        (
-            if tunnel[0].is_empty() {
-                "0.0.0.0"
-            } else {
-                tunnel[0]
-            },
-            &tunnel[1..],
-        )
-    } else {
-        ("127.0.0.1", tunnel)
     };
-    let local_port = tunnel[0];
-    let remote_host = tunnel[1];
-    let remote_port = tunnel[2];
+
+    if local_host.is_empty() {
+        local_host = "0.0.0.0";
+    }
+
     let remote_host_port = format!("{remote_host}:{remote_port}");
     let local_port = local_port.parse::<i32>()?;
     let local_host = local_host.to_owned();
