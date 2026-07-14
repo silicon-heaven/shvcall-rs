@@ -475,31 +475,30 @@ async fn make_call(
                         if nbytes == 0 {
                             // stream closed
                             break;
-                        } else {
-                            match parse_line(&line) {
-                                Ok((path, method, param)) => {
-                                    let rqid =
-                                        frame_writer.send_request_user_id(path, method, Some(RpcValue::from_cpon(param)?), opts.user_id.as_deref())
-                                            .await?;
-                                    loop {
-                                        let resp = frame_reader.receive_message().await?;
-                                        print_resp(
-                                            &mut stdout,
-                                            &resp,
-                                            (&*opts.output_format).into(),
-                                        )
+                        }
+                        match parse_line(&line) {
+                            Ok((path, method, param)) => {
+                                let rqid =
+                                    frame_writer.send_request_user_id(path, method, Some(RpcValue::from_cpon(param)?), opts.user_id.as_deref())
                                         .await?;
-                                        if resp.is_response()
-                                            && !resp.is_delay()
-                                            && resp.request_id().unwrap_or_default() == rqid
-                                        {
-                                            break;
-                                        }
+                                loop {
+                                    let resp = frame_reader.receive_message().await?;
+                                    print_resp(
+                                        &mut stdout,
+                                        &resp,
+                                        (&*opts.output_format).into(),
+                                    )
+                                    .await?;
+                                    if resp.is_response()
+                                        && !resp.is_delay()
+                                        && resp.request_id().unwrap_or_default() == rqid
+                                    {
+                                        break;
                                     }
                                 }
-                                Err(err) => {
-                                    return Err(err.into());
-                                }
+                            }
+                            Err(err) => {
+                                return Err(err.into());
                             }
                         }
                     }
