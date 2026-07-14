@@ -251,7 +251,7 @@ async fn login(url: &Url, user_agent: String) -> shvrpc::Result<(BoxedFrameReade
             (frame_reader, frame_writer)
         }
         #[cfg(target_os = "windows")]
-        "unix" => panic!("'unix schema is not supported on Windows'"),
+        "unix" => return Err("unix schema is not supported on Windows".into()),
         #[cfg(not(target_os = "windows"))]
         "unixs" => {
             let stream = UnixStream::connect(url.path()).await?;
@@ -264,7 +264,7 @@ async fn login(url: &Url, user_agent: String) -> shvrpc::Result<(BoxedFrameReade
             (frame_reader, frame_writer)
         }
         #[cfg(target_os = "windows")]
-        "unixs" => panic!("'unix schema is not supported on Windows'"),
+        "unixs" => return Err("unix schema is not supported on Windows".into()),
         #[cfg(feature = "serial")]
         "serial" => {
             let port_name = url.path();
@@ -275,7 +275,7 @@ async fn login(url: &Url, user_agent: String) -> shvrpc::Result<(BoxedFrameReade
             (frame_reader, frame_writer)
         }
         s => {
-            panic!("Scheme {s} is not supported")
+            return Err(format!("Scheme {s} is not supported").into());
         }
     };
 
@@ -337,7 +337,7 @@ async fn make_call(
                             format!("RES {}\n", res.to_cpon())
                         }
                         Ok(shvrpc::rpcmessage::Response::Delay(_)) => {
-                            panic!("Unexpected Delay response")
+                            return Err("Unexpected Delay response".into());
                         }
                         Err(err) => {
                             format!("ERR {err}\n")
@@ -359,7 +359,7 @@ async fn make_call(
                 } else if resp.is_response() {
                     match resp.response() {
                         Ok(shvrpc::rpcmessage::Response::Success(res)) => res.to_cpon(),
-                        Ok(shvrpc::rpcmessage::Response::Delay(_)) => panic!("Unexpected Delay response"),
+                        Ok(shvrpc::rpcmessage::Response::Delay(_)) => return Err("Unexpected Delay response".into()),
                         Err(err) => err.to_string(),
                     }
                 } else {
@@ -374,7 +374,7 @@ async fn make_call(
                 const VALUE: &str = "{VALUE}";
                 let resp_value_cpon = match resp.response() {
                     Ok(shvrpc::rpcmessage::Response::Success(val)) => val.to_cpon(),
-                    Ok(shvrpc::rpcmessage::Response::Delay(_)) => panic!("Unexpected Delay response"),
+                    Ok(shvrpc::rpcmessage::Response::Delay(_)) => return Err("Unexpected Delay response".into()),
                     Err(err) => err.to_rpcvalue().to_cpon(),
                 };
                 let fmtstr = fmtstr.replace(PATH, resp.shv_path().unwrap_or_default());
