@@ -394,11 +394,8 @@ async fn make_call(
     if opts.method.is_none() {
         fn parse_line(line: &str) -> std::result::Result<(&str, &str, &str), String> {
             let line = line.trim();
-            let method_ix = match line.find(':') {
-                None => {
-                    return Err(format!("Invalid line format, method not found: {line}"));
-                }
-                Some(ix) => ix,
+            let Some(method_ix) = line.find(':') else {
+                return Err(format!("Invalid line format, method not found: {line}"));
             };
             let param_ix = line.find(' ');
             let path = line.get(..method_ix).expect("Found via find()").trim();
