@@ -599,7 +599,7 @@ async fn make_burst_call(opts: &Opts, shutdown_receiver: Receiver<()>) -> Result
     let ri = ShvRI::try_from(method)?;
     let param = opts.extract_param()?;
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "It's just one func")]
     async fn burst_task(
         url: Url,
         path: String,
@@ -851,7 +851,7 @@ async fn start_tunnel_server(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Whatevs")]
 async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, tunnel_path: String, create_rqid: RqId, write_rqid: RqId, read_frame_receiver: Receiver<RpcFrame>, mut write_frame_sender: Sender<RpcFrame>, tunnel_event_sender: Sender<u64>) -> Result {
 
     let tunid = {
