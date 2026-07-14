@@ -984,11 +984,5 @@ pub async fn try_main(opts: Opts) -> Result {
     } else {
         make_call(frame_reader, frame_writer, &opts).await
     };
-    match res {
-        Ok(_) => Ok(()),
-        Err(err) => {
-            eprintln!("{err}");
-            Err(err)
-        }
-    }
+    res.inspect_err(|err| eprintln!("{err}"))
 }
