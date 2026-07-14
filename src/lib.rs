@@ -322,7 +322,7 @@ async fn make_call(
                 s.push('\n');
                 s.as_bytes().to_owned()
             }
-            OutputFormat::ChainPack => resp.as_rpcvalue().to_chainpack().to_owned(),
+            OutputFormat::ChainPack => resp.as_rpcvalue().to_chainpack().clone(),
             OutputFormat::Simple => {
                 let s = if resp.is_request() {
                     format!(
