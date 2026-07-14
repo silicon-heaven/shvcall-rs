@@ -1,5 +1,5 @@
 use clap::Parser;
-use log::*;
+use log::{debug, LevelFilter};
 use shvrpc::util::parse_log_verbosity;
 use simple_logger::SimpleLogger;
 

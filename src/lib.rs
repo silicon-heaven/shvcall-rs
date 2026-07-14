@@ -19,7 +19,7 @@ use futures::{select, AsyncReadExt};
 use futures::{FutureExt, StreamExt};
 use futures_time::future::FutureExt as ff;
 use futures_time::time::{Duration, Instant};
-use log::*;
+use log::{warn, error, debug, info};
 use shvrpc::client::{LoginParams, LoginType};
 use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpcframe::RpcFrame;
