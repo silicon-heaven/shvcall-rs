@@ -9,13 +9,13 @@ use futures::io::{BufReader, BufWriter};
 
 fn open_serial(port_name: &str) -> shvrpc::Result<(Box<dyn SerialPort>, Box<dyn SerialPort>)> {
     info!("Opening serial port: {port_name}");
-    let port = serialport::new(port_name, 115200)
+    let port = serialport::new(port_name, 115_200)
         .data_bits(serialport::DataBits::Eight)
         .stop_bits(serialport::StopBits::One)
         .parity(serialport::Parity::None)
         // serial port should never timeout,
         // timeout on serial breaks reader loop
-        .timeout(Duration::from_secs(60 * 60 *24 * 365 * 100))
+        .timeout(Duration::from_hours(365 * 100))
         .open()?;
 
     // Clone the port

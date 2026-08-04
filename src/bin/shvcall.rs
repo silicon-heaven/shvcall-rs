@@ -1,5 +1,6 @@
+#![expect(clippy::print_stdout, reason = "Probably should be removed at some point, if this is meant to be a library, but rn, it's just a binary.")]
 use clap::Parser;
-use log::*;
+use log::{debug, LevelFilter};
 use shvrpc::util::parse_log_verbosity;
 use simple_logger::SimpleLogger;
 
@@ -28,7 +29,7 @@ fn main() -> Result {
             }
         }
     }
-    logger.init().unwrap();
+    logger.init().expect("Logger must work");
 
     debug!("=====================================================");
     debug!("{app_name} ver. {app_version}");

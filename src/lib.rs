@@ -1,3 +1,4 @@
+#![expect(clippy::print_stdout, clippy::print_stderr, reason = "Probably should be removed at some point, if this is meant to be a library, but rn, it's just a binary.")]
 use std::future::Future;
 use std::io::Stdout;
 use std::pin::pin;
@@ -19,7 +20,7 @@ use futures::{select, AsyncReadExt};
 use futures::{FutureExt, StreamExt};
 use futures_time::future::FutureExt as ff;
 use futures_time::time::{Duration, Instant};
-use log::*;
+use log::{warn, error, debug, info};
 use shvrpc::client::{LoginParams, LoginType};
 use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpcframe::RpcFrame;
@@ -129,7 +130,7 @@ impl Opts {
     fn extract_user_agent(&self) -> String {
         let app_name = env!("CARGO_PKG_NAME");
         let app_version = env!("CARGO_PKG_VERSION");
-        self.user_agent.clone().unwrap_or(format!("{app_name} {app_version}"))
+        self.user_agent.clone().unwrap_or_else(|| format!("{app_name} {app_version}"))
     }
 }
 
@@ -163,7 +164,7 @@ where
 {
     smol::spawn(async move {
         if let Err(e) = fut.await {
-            error!("{e}")
+            error!("{e}");
         }
     }).detach();
 }
@@ -250,7 +251,7 @@ async fn login(url: &Url, user_agent: String) -> shvrpc::Result<(BoxedFrameReade
             (frame_reader, frame_writer)
         }
         #[cfg(target_os = "windows")]
-        "unix" => panic!("'unix schema is not supported on Windows'"),
+        "unix" => return Err("unix schema is not supported on Windows".into()),
         #[cfg(not(target_os = "windows"))]
         "unixs" => {
             let stream = UnixStream::connect(url.path()).await?;
@@ -263,7 +264,7 @@ async fn login(url: &Url, user_agent: String) -> shvrpc::Result<(BoxedFrameReade
             (frame_reader, frame_writer)
         }
         #[cfg(target_os = "windows")]
-        "unixs" => panic!("'unix schema is not supported on Windows'"),
+        "unixs" => return Err("unix schema is not supported on Windows".into()),
         #[cfg(feature = "serial")]
         "serial" => {
             let port_name = url.path();
@@ -274,7 +275,7 @@ async fn login(url: &Url, user_agent: String) -> shvrpc::Result<(BoxedFrameReade
             (frame_reader, frame_writer)
         }
         s => {
-            panic!("Scheme {s} is not supported")
+            return Err(format!("Scheme {s} is not supported").into());
         }
     };
 
@@ -321,7 +322,7 @@ async fn make_call(
                 s.push('\n');
                 s.as_bytes().to_owned()
             }
-            OutputFormat::ChainPack => resp.as_rpcvalue().to_chainpack().to_owned(),
+            OutputFormat::ChainPack => resp.as_rpcvalue().to_chainpack().clone(),
             OutputFormat::Simple => {
                 let s = if resp.is_request() {
                     format!(
@@ -336,7 +337,7 @@ async fn make_call(
                             format!("RES {}\n", res.to_cpon())
                         }
                         Ok(shvrpc::rpcmessage::Response::Delay(_)) => {
-                            panic!("Unexpected Delay response")
+                            return Err("Unexpected Delay response".into());
                         }
                         Err(err) => {
                             format!("ERR {err}\n")
@@ -358,7 +359,7 @@ async fn make_call(
                 } else if resp.is_response() {
                     match resp.response() {
                         Ok(shvrpc::rpcmessage::Response::Success(res)) => res.to_cpon(),
-                        Ok(shvrpc::rpcmessage::Response::Delay(_)) => panic!("Unexpected Delay response"),
+                        Ok(shvrpc::rpcmessage::Response::Delay(_)) => return Err("Unexpected Delay response".into()),
                         Err(err) => err.to_string(),
                     }
                 } else {
@@ -373,7 +374,7 @@ async fn make_call(
                 const VALUE: &str = "{VALUE}";
                 let resp_value_cpon = match resp.response() {
                     Ok(shvrpc::rpcmessage::Response::Success(val)) => val.to_cpon(),
-                    Ok(shvrpc::rpcmessage::Response::Delay(_)) => panic!("Unexpected Delay response"),
+                    Ok(shvrpc::rpcmessage::Response::Delay(_)) => return Err("Unexpected Delay response".into()),
                     Err(err) => err.to_rpcvalue().to_cpon(),
                 };
                 let fmtstr = fmtstr.replace(PATH, resp.shv_path().unwrap_or_default());
@@ -393,25 +394,22 @@ async fn make_call(
     if opts.method.is_none() {
         fn parse_line(line: &str) -> std::result::Result<(&str, &str, &str), String> {
             let line = line.trim();
-            let method_ix = match line.find(':') {
-                None => {
-                    return Err(format!("Invalid line format, method not found: {line}"));
-                }
-                Some(ix) => ix,
+            let Some(method_ix) = line.find(':') else {
+                return Err(format!("Invalid line format, method not found: {line}"));
             };
             let param_ix = line.find(' ');
-            let path = line[..method_ix].trim();
-            let (method, param) = match param_ix {
-                None => (line[method_ix + 1..].trim(), ""),
-                Some(ix) => (line[method_ix + 1..ix].trim(), line[ix + 1..].trim()),
-            };
+            let path = line.get(..method_ix).expect("Found via find()").trim();
+            let (method, param) = param_ix.map_or_else(
+                || (line.get(method_ix + 1..).expect("We check the bounds").trim(), ""),
+                |ix| (line.get(method_ix + 1..ix).expect("We check the bounds").trim(), line.get(ix + 1..).expect("We check the bounds").trim())
+            );
             Ok((path, method, param))
         }
         if is_tty() {
             #[cfg(feature = "readline")]
             {
                 let (mut rl, mut rl_stdout) =
-                    rustyline_async::Readline::new("> ".to_owned()).unwrap();
+                    rustyline_async::Readline::new("> ".to_owned()).expect("Readline must work");
                 rl.set_max_history(1000);
                 loop {
                     match rl.readline().await {
@@ -474,31 +472,30 @@ async fn make_call(
                         if nbytes == 0 {
                             // stream closed
                             break;
-                        } else {
-                            match parse_line(&line) {
-                                Ok((path, method, param)) => {
-                                    let rqid =
-                                        frame_writer.send_request_user_id(path, method, Some(RpcValue::from_cpon(param)?), opts.user_id.as_deref())
-                                            .await?;
-                                    loop {
-                                        let resp = frame_reader.receive_message().await?;
-                                        print_resp(
-                                            &mut stdout,
-                                            &resp,
-                                            (&*opts.output_format).into(),
-                                        )
+                        }
+                        match parse_line(&line) {
+                            Ok((path, method, param)) => {
+                                let rqid =
+                                    frame_writer.send_request_user_id(path, method, Some(RpcValue::from_cpon(param)?), opts.user_id.as_deref())
                                         .await?;
-                                        if resp.is_response()
-                                            && !resp.is_delay()
-                                            && resp.request_id().unwrap_or_default() == rqid
-                                        {
-                                            break;
-                                        }
+                                loop {
+                                    let resp = frame_reader.receive_message().await?;
+                                    print_resp(
+                                        &mut stdout,
+                                        &resp,
+                                        (&*opts.output_format).into(),
+                                    )
+                                    .await?;
+                                    if resp.is_response()
+                                        && !resp.is_delay()
+                                        && resp.request_id().unwrap_or_default() == rqid
+                                    {
+                                        break;
                                     }
                                 }
-                                Err(err) => {
-                                    return Err(err.into());
-                                }
+                            }
+                            Err(err) => {
+                                return Err(err.into());
                             }
                         }
                     }
@@ -507,14 +504,12 @@ async fn make_call(
             }
         }
     } else {
-        let method = opts.method.clone().unwrap();
-        let (path, method) = if let Some(ix) = method.find(':') {
-            (method[0..ix].to_owned(), method[ix + 1..].to_owned())
-        } else {
+        let method = opts.method.clone().expect("Method must be present");
+        let Some((path, method)) = method.split_once(':') else {
             return Err("--method parameter must be in form shv/path:method".into());
         };
         let param = opts.extract_param()?;
-        let rqid = frame_writer.send_request_user_id(&path, &method, param, opts.user_id.as_deref()).await?;
+        let rqid = frame_writer.send_request_user_id(path, method, param, opts.user_id.as_deref()).await?;
         let res = receive_response(
             &mut frame_reader,
             rqid,
@@ -588,20 +583,20 @@ async fn make_burst_call(opts: &Opts, shutdown_receiver: Receiver<()>) -> Result
     if opts.method.is_none() {
         return Err("--method parameter missing".into());
     }
-    let burst = opts.burst.clone().unwrap();
+    let burst = opts.burst.clone().expect("Burst must be present");
     let (nmsg, ntask) = {
         let mut s = burst.split(',');
-        let nmsg = s.next().unwrap();
-        let nmsg = nmsg.parse::<i32>().unwrap();
+        let nmsg = s.next().expect("Burst param must be in the correct format");
+        let nmsg = nmsg.parse::<i32>().expect("Burst param must be in the correct format");
         let ntask = s.next().unwrap_or("1");
-        let ntask = ntask.parse::<i32>().unwrap();
+        let ntask = ntask.parse::<i32>().expect("Burst param must be in the correct format");
         (nmsg, ntask)
     };
-    let method = opts.method.clone().unwrap();
+    let method = opts.method.clone().expect("Method must be present");
     let ri = ShvRI::try_from(method)?;
     let param = opts.extract_param()?;
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "It's just one func")]
     async fn burst_task(
         url: Url,
         path: String,
@@ -730,27 +725,17 @@ async fn start_tunnel_server(
 
     let tunnel_path = opts.tunnel_path.as_deref().unwrap_or(".app/tunnel").to_owned();
 
-    let tunnel_str = opts.tunnel.as_ref().unwrap().as_str();
+    let tunnel_str = opts.tunnel.as_ref().expect("Tunnel must be present").as_str();
     let tunnel: Vec<_> = split_quoted(tunnel_str);
     let tunnel = &tunnel[..];
-    if tunnel.len() < 3 || tunnel.len() > 4 {
+    let &[mut local_host, local_port, remote_host, remote_port] = tunnel else {
         return Err(format!("Invalid tunnel specification: {tunnel_str}").into());
-    }
-    let (local_host, tunnel) = if tunnel.len() == 4 {
-        (
-            if tunnel[0].is_empty() {
-                "0.0.0.0"
-            } else {
-                tunnel[0]
-            },
-            &tunnel[1..],
-        )
-    } else {
-        ("127.0.0.1", tunnel)
     };
-    let local_port = tunnel[0];
-    let remote_host = tunnel[1];
-    let remote_port = tunnel[2];
+
+    if local_host.is_empty() {
+        local_host = "0.0.0.0";
+    }
+
     let remote_host_port = format!("{remote_host}:{remote_port}");
     let local_port = local_port.parse::<i32>()?;
     let local_host = local_host.to_owned();
@@ -863,8 +848,8 @@ async fn start_tunnel_server(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, tunnel_path: String, create_rqid: RqId, write_rqid: RqId, read_frame_receiver: Receiver<RpcFrame>, mut write_frame_sender: Sender<RpcFrame>, tunnel_event_sender: Sender<u64>) -> Result {
+#[expect(clippy::too_many_arguments, reason = "Whatevs")]
+async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, tunnel_path: String, create_rqid: RqId, write_rqid: RqId, read_frame_receiver: Receiver<RpcFrame>, write_frame_sender: Sender<RpcFrame>, tunnel_event_sender: Sender<u64>) -> Result {
 
     let tunid = {
         debug!(target: "Tunnel", "Creating tunnel");
@@ -909,11 +894,11 @@ async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, tunne
                 let n = n?;
                 if n == 0 {
                     debug!(target: "Tunnel", "Tunnel client socket closed");
-                    let _ = tunnel_event_sender.send(tunid).await;
+                    tunnel_event_sender.send(tunid).await.inspect_err(|err| eprintln!("Failed to send tunnel event: {err}")).ok();
                     break;
                 }
-                let data = &sock_read_buff[0 .. n];
-                seqno_to_write = process_socket_to_broker_data(&tunnel_path, tunid, seqno_to_write, write_rqid, data, &mut write_frame_sender).await?;
+                let data = sock_read_buff.get(0 .. n).expect("We expect read to return the correct value.");
+                seqno_to_write = process_socket_to_broker_data(&tunnel_path, tunid, seqno_to_write, write_rqid, data, &write_frame_sender).await?;
             }
             frame = read_frame_receiver.recv().fuse() => {
                 match frame {
@@ -958,7 +943,7 @@ async fn process_broker_to_socket_frame(rqid: RqId, expected_seqno: SeqNo, frame
     warn!("Seqno not received, ignoring data.");
     Ok(expected_seqno)
 }
-async fn process_socket_to_broker_data(tunnel_path: &str, tunid: u64, seqno_to_write: SeqNo, write_rqid: RqId, data: &[u8], frame_writer: &mut Sender<RpcFrame>) -> shvrpc::Result<SeqNo> {
+async fn process_socket_to_broker_data(tunnel_path: &str, tunid: u64, seqno_to_write: SeqNo, write_rqid: RqId, data: &[u8], frame_writer: &Sender<RpcFrame>) -> shvrpc::Result<SeqNo> {
     let mut rq = RpcMessage::new_request(format!("{tunnel_path}/{tunid}"), "write").with_param(data);
     rq.set_request_id(write_rqid);
     rq.set_seqno(seqno_to_write);
@@ -999,11 +984,5 @@ pub async fn try_main(opts: Opts) -> Result {
     } else {
         make_call(frame_reader, frame_writer, &opts).await
     };
-    match res {
-        Ok(_) => Ok(()),
-        Err(err) => {
-            eprintln!("{err}");
-            Err(err)
-        }
-    }
+    res.inspect_err(|err| eprintln!("{err}"))
 }
