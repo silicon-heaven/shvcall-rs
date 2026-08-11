@@ -101,7 +101,7 @@ pub struct Opts {
     #[arg(short = 'a', long)]
     pub user_agent: Option<String>,
 
-    /// Verbose mode (module, .)
+    /// Verbose mode (module, .), for tunnel diagnostics use: -v Tunnel
     #[arg(short, long)]
     pub verbose: Option<String>,
 
@@ -692,8 +692,10 @@ fn tunnel_close_frame(tunnel_path: &str, tunid: u64) -> shvrpc::Result<(RqId, Rp
 
 async fn send_tunnel_close(tunnel_path: &str, tunid: u64, broker_frame_writer: &mut BoxedFrameWriter) -> Option<RqId> {
     if let Ok((rqid, frame)) = tunnel_close_frame(tunnel_path, tunid) && broker_frame_writer.send_frame(frame).await.is_ok() {
+        debug!(target: "Tunnel", "Sent close request for tunnel {tunid} via {tunnel_path}");
         return Some(rqid);
     }
+    warn!(target: "Tunnel", "Failed to send close request for tunnel {tunid} via {tunnel_path}");
     None
 }
 
@@ -710,6 +712,7 @@ async fn handle_client_connection_closed_event(
     broker_frame_writer: &mut BoxedFrameWriter,
 ) {
     if let Some(tunnel) = tunnels.iter_mut().find(|tunnel| tunnel.tunid == Some(tunid)) {
+        debug!(target: "Tunnel", "Client side of tunnel {tunid} closed, closing broker tunnel");
         tunnel.close_rqid = send_tunnel_close(tunnel_path, tunid, broker_frame_writer).await;
         if tunnel.close_rqid.is_none() {
             tunnels.retain(|tunnel| tunnel.tunid != Some(tunid));
@@ -746,8 +749,9 @@ async fn start_tunnel_server(
 
     let mut tunnels: Vec<Tunnel> = Vec::new();
 
-    debug!(target: "Tunnel", "Starting TCP server on {local_host}:{local_port}");
+    debug!(target: "Tunnel", "Starting TCP tunnel listener on {local_host}:{local_port}; forwarding to {remote_host_port} via {tunnel_path}");
     let listener = TcpListener::bind(format!("{local_host}:{local_port}")).await?;
+    debug!(target: "Tunnel", "TCP tunnel listener is ready on {local_host}:{local_port}");
     let mut incoming = listener.incoming();
 
     let (tunnel_event_sender, tunnel_event_receiver) = async_channel::unbounded::<u64>();
@@ -759,7 +763,10 @@ async fn start_tunnel_server(
             stream = incoming.next().fuse() => {
                 if let Some(stream) = stream {
                     let stream = stream?;
-                    debug!(target: "Tunnel", "New connection from {:?}", stream.local_addr());
+                    let peer_addr = stream
+                        .peer_addr()
+                        .map_or_else(|err| format!("unknown peer ({err})"), |addr| addr.to_string());
+                    debug!(target: "Tunnel", "Accepted client connection from {peer_addr}; opening tunnel to {remote_host_port}");
                     let create_rqid = RpcMessage::next_request_id();
                     let write_rqid = RpcMessage::next_request_id();
                     let (read_frame_sender, read_frame_receiver) = async_channel::unbounded();
@@ -771,7 +778,7 @@ async fn start_tunnel_server(
                     let tunnel_path = tunnel_path.clone();
                     let tunnel_event_sender = tunnel_event_sender.clone();
 					spawn_and_log_error(async move {
-					    handle_tunnel_socket(stream, remote_host_port, tunnel_path, create_rqid, write_rqid, read_frame_receiver, write_frame_sender.clone(), tunnel_event_sender.clone()).await.map_err(|e| e.to_string())
+                        handle_tunnel_socket(stream, peer_addr, remote_host_port, tunnel_path, create_rqid, write_rqid, read_frame_receiver, write_frame_sender.clone(), tunnel_event_sender.clone()).await.map_err(|e| e.to_string())
 					});
                 } else {
                     break;
@@ -782,6 +789,7 @@ async fn start_tunnel_server(
                     Ok(frame) => {
                         let rqid = frame.request_id().unwrap_or(0);
                         if tunnels.iter().any(|tunnel| tunnel.close_rqid == Some(rqid)) {
+                            debug!(target: "Tunnel", "Broker acknowledged tunnel close request {rqid}");
                             tunnels.retain(|tunnel| tunnel.close_rqid != Some(rqid));
                             continue;
                         }
@@ -826,6 +834,7 @@ async fn start_tunnel_server(
 
     for tunnel in &mut tunnels {
         if tunnel.close_rqid.is_none() && let Some(tunid) = tunnel.tunid {
+            debug!(target: "Tunnel", "Shutdown is closing active tunnel {tunid}");
             tunnel.close_rqid = send_tunnel_close(&tunnel_path, tunid, &mut broker_frame_writer).await;
         }
     }
@@ -838,6 +847,7 @@ async fn start_tunnel_server(
         select! {
             frame = broker_frame_reader.receive_frame().fuse() => {
                 if let Ok(frame) = frame && let Some(rqid) = frame.request_id() {
+                    debug!(target: "Tunnel", "Broker acknowledged shutdown close request {rqid}");
                     tunnels.retain(|tunnel| tunnel.close_rqid != Some(rqid));
                 } else {
                     break;
@@ -853,10 +863,10 @@ async fn start_tunnel_server(
 }
 
 #[expect(clippy::too_many_arguments, reason = "Whatevs")]
-async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, tunnel_path: String, create_rqid: RqId, write_rqid: RqId, read_frame_receiver: Receiver<RpcFrame>, write_frame_sender: Sender<RpcFrame>, tunnel_event_sender: Sender<u64>) -> Result {
+async fn handle_tunnel_socket(stream: TcpStream, peer_addr: String, remote_host_port: String, tunnel_path: String, create_rqid: RqId, write_rqid: RqId, read_frame_receiver: Receiver<RpcFrame>, write_frame_sender: Sender<RpcFrame>, tunnel_event_sender: Sender<u64>) -> Result {
 
     let tunid = {
-        debug!(target: "Tunnel", "Creating tunnel");
+        debug!(target: "Tunnel", "Creating tunnel for client {peer_addr} via {tunnel_path}");
         let tun_opts = Map::from([("host".into(), (remote_host_port).into())]);
         let mut rq = RpcMessage::new_request(&tunnel_path, "create").with_param(tun_opts);
         rq.set_request_id(create_rqid);
@@ -870,12 +880,13 @@ async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, tunne
                         let resp = rpcmsg.response()?;
                         if let shvrpc::rpcmessage::Response::Success(val) = resp {
                             let tunid = val.as_str().parse::<u64>()?;
+                            debug!(target: "Tunnel", "Broker tunnel {tunid} created for client {peer_addr}");
                             break tunid;
                         }
                     }
                 }
                 Err(e) => {
-                    return Err(format!("Creating tunnel timeout: {e}").into());
+                    return Err(format!("Creating tunnel timeout for client {peer_addr}: {e}").into());
                 }
             }
         }
@@ -887,7 +898,7 @@ async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, tunne
         rq.set_request_id(write_rqid);
         rq.set_seqno(seqno_to_write);
         seqno_to_write += 1;
-        debug!(target: "Tunnel", "Starting data exchange");
+        debug!(target: "Tunnel", "Starting tunnel {tunid} data exchange for client {peer_addr}");
         write_frame_sender.send(rq.to_frame()?).await?;
     };
     let (mut sock_reader, mut sock_writer) = stream.split();
@@ -897,7 +908,7 @@ async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, tunne
             n = sock_reader.read(&mut sock_read_buff).fuse() => {
                 let n = n?;
                 if n == 0 {
-                    debug!(target: "Tunnel", "Tunnel client socket closed");
+                    debug!(target: "Tunnel", "Client {peer_addr} closed tunnel {tunid}");
                     tunnel_event_sender.send(tunid).await.inspect_err(|err| eprintln!("Failed to send tunnel event: {err}")).ok();
                     break;
                 }
@@ -910,13 +921,14 @@ async fn handle_tunnel_socket(stream: TcpStream, remote_host_port: String, tunne
                         expected_read_seqno = process_broker_to_socket_frame(write_rqid, expected_read_seqno, &frame, &mut sock_writer).await?;
                     }
                     Err(e) => {
-                        error!("Get response receiver error: {e}");
+                        error!(target: "Tunnel", "Tunnel {tunid} receiver for client {peer_addr} failed: {e}");
                         break;
                     }
                 }
             }
         }
     }
+    debug!(target: "Tunnel", "Finished tunnel {tunid} handler for client {peer_addr}");
     Ok(())
 }
 
