@@ -1,6 +1,6 @@
 #![expect(clippy::print_stdout, clippy::print_stderr, reason = "Probably should be removed at some point, if this is meant to be a library, but rn, it's just a binary.")]
 use std::future::Future;
-use std::io::Stdout;
+use std::io::{BufRead, Stdout};
 use std::pin::pin;
 use std::sync::Arc;
 use futures::future::{pending, select};
@@ -88,6 +88,10 @@ pub struct Opts {
     /// Path to the broker's .app/tunnel where the tunnel should be created.
     #[arg(long)]
     pub tunnel_path: Option<String>,
+
+    /// In tunnel mode, exit gracefully when standard input receives a line whose trimmed content is `exit`.
+    #[arg(long, requires = "tunnel", conflicts_with = "burst")]
+    pub tunnel_exit_on_stdin: bool,
 
     /// Send N request in M threads, format is N[,M], default M == 1
     #[arg(long)]
@@ -951,8 +955,40 @@ async fn process_socket_to_broker_data(tunnel_path: &str, tunid: u64, seqno_to_w
     Ok(seqno_to_write + 1)
 }
 
+fn stdin_has_tunnel_exit_command<R: BufRead>(reader: R) -> std::io::Result<bool> {
+    for line in reader.lines() {
+        if line?.trim() == "exit" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn spawn_tunnel_stdin_shutdown(shutdown_sender: Sender<()>) {
+    if let Err(err) = std::thread::Builder::new()
+        .name("shvcall-tunnel-stdin-shutdown".to_owned())
+        .spawn(move || match stdin_has_tunnel_exit_command(std::io::stdin().lock()) {
+            Ok(true) => {
+                info!(target: "Tunnel", "Received shutdown command from stdin");
+                shutdown_sender.close();
+            }
+            Ok(false) => {
+                debug!(target: "Tunnel", "Standard input closed without shutdown command");
+            }
+            Err(err) => {
+                warn!(target: "Tunnel", "Failed to read standard input for shutdown command: {err}");
+            }
+        })
+    {
+        warn!(target: "Tunnel", "Failed to start stdin shutdown watcher: {err}");
+    }
+}
+
 pub async fn try_main(opts: Opts) -> Result {
     let (shutdown_sender, shutdown_receiver) = async_channel::bounded::<()>(1);
+    if opts.burst.is_none() && opts.tunnel.is_some() && opts.tunnel_exit_on_stdin {
+        spawn_tunnel_stdin_shutdown(shutdown_sender.clone());
+    }
     smol::spawn(async move {
         #[cfg(windows)]
         let signal_list = [async_signal::Signal::Int];
