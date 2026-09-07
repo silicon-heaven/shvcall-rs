@@ -1156,9 +1156,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.33"
+version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
+checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "mach2"
@@ -1635,9 +1635,9 @@ dependencies = [
 
 [[package]]
 name = "serialport"
-version = "4.9.0"
+version = "4.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4d91116f97173694f1642263b2ff837f80d933aa837e2314969f6728f661df3"
+checksum = "6a2f4ac56b5d3af3c40fbbee17be96d532cba02fa5853926aacdb77d926272ab"
 dependencies = [
  "bitflags 2.11.0",
  "cfg-if",
@@ -1671,7 +1671,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shvcall"
-version = "3.11.39"
+version = "3.11.40"
 dependencies = [
  "async-channel 2.5.0",
  "async-signal",
@@ -1694,12 +1694,11 @@ dependencies = [
 
 [[package]]
 name = "shvproto"
-version = "6.3.3"
+version = "8.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e01280e1ef6031aeb3ae2c82d225c3c5205f3f50a3b127831bbdb0809c7acb22"
+checksum = "98ae2b7df702cfb762a690fedb67aeefb26a93f443f23cad3b244e4f3e943c0b"
 dependencies = [
  "chrono",
- "clap",
  "hex",
  "libshvproto-macros",
  "log",
@@ -1707,9 +1706,9 @@ dependencies = [
 
 [[package]]
 name = "shvrpc"
-version = "19.1.0"
+version = "21.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd2d5e11f140a759b347cf8e98c8a072bf66797244e8ba54250ad24ed28a068e"
+checksum = "f1c2d9fa15784fab725d64340e1b5f2c677769935ec9c43710df615462a4aa3d"
 dependencies = [
  "anyhow",
  "async-trait",
