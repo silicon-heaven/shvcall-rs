@@ -772,7 +772,6 @@ async fn start_tunnel_server(
                     let (read_frame_sender, read_frame_receiver) = async_channel::unbounded();
                     let tunnel = Tunnel {tunid: None, create_rqid, write_rqid, close_rqid: None, frame_sender: read_frame_sender};
                     tunnels.push(tunnel);
-                    let read_frame_receiver = read_frame_receiver.clone();
                     let write_frame_sender = write_frame_sender.clone();
                     let remote_host_port = remote_host_port.clone();
                     let tunnel_path = tunnel_path.clone();
