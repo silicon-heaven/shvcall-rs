@@ -1635,9 +1635,9 @@ dependencies = [
 
 [[package]]
 name = "serialport"
-version = "4.10.0"
+version = "4.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a2f4ac56b5d3af3c40fbbee17be96d532cba02fa5853926aacdb77d926272ab"
+checksum = "6ba5f8f29aa20853c4e3e85a33ec580eb66be1f057142e77a333834a318bacf2"
 dependencies = [
  "bitflags 2.11.0",
  "cfg-if",
@@ -1671,7 +1671,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shvcall"
-version = "3.11.41"
+version = "3.11.42"
 dependencies = [
  "async-channel 2.5.0",
  "async-signal",
@@ -1694,9 +1694,9 @@ dependencies = [
 
 [[package]]
 name = "shvproto"
-version = "8.0.0"
+version = "8.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98ae2b7df702cfb762a690fedb67aeefb26a93f443f23cad3b244e4f3e943c0b"
+checksum = "168f82c4e669d50442ad77a22b9d68b12a689477669b9f366151301d8f9ff78e"
 dependencies = [
  "chrono",
  "hex",
