@@ -567,7 +567,7 @@ async fn receive_response(
             futures::future::Either::Right(_) => return Err(
                 RpcError::new(
                     shvrpc::rpcmessage::RpcErrorCode::MethodCallTimeout,
-                    format!("Method call timeout after {} ms", timeout.map(|t| t.as_millis()).unwrap_or_default())
+                    format!("Method call timeout after {} ms", timeout.map_or_default(|t| t.as_millis()))
                 )
                 .into(),
                 ),
